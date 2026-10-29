@@ -1,0 +1,20 @@
+# Copy to conf/local.conf (git-ignored) and fill in.
+
+db {
+  url = "jdbc:postgresql://db-host:5432/youstream"
+  user = "youstream"
+  password = "change-me"
+}
+
+ldap {
+  url = "ldaps://dc01.corp.example.com:636"
+  domain = "corp.example.com"
+  baseDn = "DC=corp,DC=example,DC=com"
+  # requiredGroup = "CN=YouStream Users,OU=Groups,DC=corp,DC=example,DC=com"
+  # adminGroup = "CN=YouStream Admins,OU=Groups,DC=corp,DC=example,DC=com"
+}
+
+jwt {
+  # at least 32 random bytes, e.g. openssl rand -base64 48
+  secret = "change-me"
+}

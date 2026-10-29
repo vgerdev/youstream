@@ -1,0 +1,40 @@
+import com.github.gradle.node.npm.task.NpmTask
+
+plugins {
+    id 'com.github.node-gradle.node'
+}
+
+description = 'SolidJS frontend, packaged as classpath:public for the Jooby server'
+
+apply from: 'dependencies.gradle'
+
+node {
+    // use the Node.js already on PATH
+    download = false
+}
+
+def npmBuild = tasks.register('npmBuild', NpmTask) {
+    dependsOn tasks.named('npmInstall')
+    args = ['run', 'build']
+    inputs.dir('src')
+    inputs.files('index.html', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts')
+    outputs.dir('dist')
+}
+
+def npmTest = tasks.register('npmTest', NpmTask) {
+    dependsOn tasks.named('npmInstall')
+    args = ['run', 'test']
+    inputs.dir('src')
+    inputs.files('package.json', 'vite.config.ts')
+    outputs.upToDateWhen { true }
+}
+
+tasks.named('processResources', ProcessResources) {
+    from(npmBuild) {
+        into 'public'
+    }
+}
+
+tasks.named('check') {
+    dependsOn npmTest
+}

@@ -1,0 +1,12 @@
+dependencies {
+    api project(':youstream-auth')
+    api project(':youstream-media')
+    api libs.jooby
+
+    implementation libs.joobyJackson
+
+    annotationProcessor libs.joobyApt
+
+    testImplementation libs.joobyTest
+    testImplementation libs.joobyUndertow
+}

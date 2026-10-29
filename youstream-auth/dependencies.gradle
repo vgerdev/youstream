@@ -1,0 +1,7 @@
+dependencies {
+    api project(':youstream-db')
+
+    implementation libs.unboundid
+    implementation libs.javaJwt
+    implementation libs.sshdCore
+}

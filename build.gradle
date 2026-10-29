@@ -1,0 +1,46 @@
+plugins {
+    id 'com.github.node-gradle.node' version '7.1.0' apply false
+}
+
+apply from: 'dependencies.gradle'
+
+allprojects {
+    group = 'com.youstream'
+    version = '0.1.0-SNAPSHOT'
+}
+
+subprojects {
+    apply plugin: 'java-library'
+
+    repositories {
+        mavenCentral()
+    }
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(25)
+        }
+    }
+
+    dependencies {
+        compileOnly libs.lombok
+        annotationProcessor libs.lombok
+        testCompileOnly libs.lombok
+        testAnnotationProcessor libs.lombok
+
+        testImplementation platform(libs.junitBom)
+        testImplementation libs.junitJupiter
+        testImplementation libs.assertj
+        testRuntimeOnly libs.junitLauncher
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+        // Jooby MVC binds parameters by name
+        options.compilerArgs += ['-parameters']
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
+}

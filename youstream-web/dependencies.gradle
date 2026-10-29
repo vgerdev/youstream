@@ -1,0 +1,3 @@
+// npm dependencies live in package.json; this project has no JVM dependencies
+dependencies {
+}

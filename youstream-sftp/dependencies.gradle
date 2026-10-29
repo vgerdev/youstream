@@ -1,0 +1,7 @@
+dependencies {
+    api project(':youstream-auth')
+    api project(':youstream-media')
+
+    implementation libs.sshdCore
+    implementation libs.sshdSftp
+}

@@ -1,0 +1,3 @@
+description = 'FFmpeg/ffprobe wrappers, transcode job queue and ingest service'
+
+apply from: 'dependencies.gradle'

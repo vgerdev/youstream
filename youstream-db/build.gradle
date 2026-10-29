@@ -1,0 +1,3 @@
+description = 'HikariCP connection pool, Flyway migrations and jcabi-jdbc repositories'
+
+apply from: 'dependencies.gradle'

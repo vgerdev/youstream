@@ -1,0 +1,10 @@
+rootProject.name = 'youstream'
+
+include 'youstream-common',
+        'youstream-db',
+        'youstream-auth',
+        'youstream-media',
+        'youstream-sftp',
+        'youstream-api',
+        'youstream-web',
+        'youstream-server'

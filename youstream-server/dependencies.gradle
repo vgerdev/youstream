@@ -1,0 +1,8 @@
+dependencies {
+    implementation project(':youstream-api')
+    implementation project(':youstream-sftp')
+    implementation libs.joobyUndertow
+
+    runtimeOnly project(':youstream-web')
+    runtimeOnly libs.logback
+}

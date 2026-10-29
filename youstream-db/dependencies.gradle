@@ -1,0 +1,9 @@
+dependencies {
+    api project(':youstream-common')
+    api libs.hikari
+    api libs.jcabiJdbc
+
+    implementation libs.flywayCore
+    implementation libs.flywayPostgres
+    implementation libs.postgres
+}

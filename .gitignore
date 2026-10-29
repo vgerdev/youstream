@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+out/
+bin/
+
+# Node / frontend
+node_modules/
+youstream-web/dist/
+youstream-web/.gradle/
+
+# Runtime data and secrets
+data/
+conf/local.conf
+*.log

@@ -1,0 +1,28 @@
+plugins {
+    id 'application'
+}
+
+description = 'Executable that wires the HTTP server, SFTP server and transcode workers'
+
+apply from: 'dependencies.gradle'
+
+application {
+    mainClass = 'com.youstream.server.YouStreamServer'
+    applicationName = 'youstream'
+}
+
+// conf/ lives at the repository root during development and next to bin/ in the distribution
+tasks.named('run') {
+    workingDir = rootProject.projectDir
+}
+
+distributions {
+    main {
+        contents {
+            from(rootProject.file('conf')) {
+                into 'conf'
+                exclude 'local.conf'
+            }
+        }
+    }
+}

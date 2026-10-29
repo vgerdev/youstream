@@ -1,0 +1,334 @@
+# YouStream — Implementation Plan
+
+A self-hosted video sharing platform: upload (browser or SFTP), transcode to adaptive HLS, browse, watch, comment, like, subscribe, search, playlists, and share/embed.
+
+## 1. Decisions
+
+| Area | Choice |
+|---|---|
+| Language / JDK | Java 25 (Gradle toolchain) |
+| Build | Gradle 9.1.0 wrapper, **Groovy DSL**, multi-project; each project has its own `build.gradle` + `dependencies.gradle` |
+| Web framework | Jooby 4.x running on the **Undertow** server module (`jooby-undertow`), MVC controllers via `jooby-apt` |
+| SFTP | Apache MINA SSHD (`org.apache.sshd:sshd-core` + `sshd-sftp`) |
+| Database | Remote PostgreSQL (you supply the credentials when Phase 0 needs them) |
+| DB access | `jcabi-jdbc` (`JdbcSession`) on a **HikariCP** pool |
+| Migrations | Flyway (assumption — you didn't name a tool) |
+| Models | Lombok `@Data` / `@Builder` (Lombok ≥ 1.18.40 for JDK 25) |
+| Auth | **Active Directory** bind over LDAPS (UnboundID LDAP SDK) → JWT for the web; SFTP accepts the AD password and/or SSH public keys the user registers in their profile |
+| Media | FFmpeg/ffprobe → multi-bitrate **HLS** + thumbnails, run by a background worker |
+| Storage | Local disk behind a pluggable `StorageService` interface (S3/MinIO can be added later) |
+| Frontend | SolidJS + TypeScript + Vite + Tailwind CSS, `@solidjs/router`, `@tanstack/solid-query`, `hls.js` |
+| Scope v1 | Upload/watch/share, comments & likes, channels & subscriptions, search & playlists, visibility (public/unlisted/private), share links, embed player |
+
+## 2. Repository layout
+
+```
+youstream/
+├── settings.gradle               # rootProject.name = 'youstream'; include all youstream-* projects
+├── build.gradle                  # shared config for subprojects (toolchain 25, Lombok, JUnit, repos)
+├── dependencies.gradle           # ext.versions + ext.libs (the one place versions live)
+├── lombok.config
+├── gradle/wrapper/…              # Gradle 9.1.0
+├── conf/
+│   ├── application.conf          # defaults, committed
+│   └── local.conf                # secrets (DB, AD, JWT) — git-ignored
+├── youstream-common/             # domain models, config, StorageService, utilities
+├── youstream-db/                 # HikariCP, Flyway migrations, jcabi-jdbc repositories
+├── youstream-auth/               # AD authenticator, JWT, SSH key service, playback-token signer
+├── youstream-media/              # ffprobe/ffmpeg wrappers, job queue, transcode worker, IngestService
+├── youstream-sftp/               # MINA SSHD server, SFTP ingest
+├── youstream-api/                # Jooby routes/controllers, DTOs, error handling, media + SPA serving
+├── youstream-web/                # SolidJS app; Gradle wraps the npm build and packages dist/ as a jar
+└── youstream-server/             # main(): wires everything, application plugin, distribution
+```
+
+Each subproject:
+
+```
+youstream-xyz/
+├── build.gradle          # plugins + `apply from: 'dependencies.gradle'`
+├── dependencies.gradle   # dependencies { … } using libs.* from the root file
+└── src/main/java/com/youstream/xyz/…
+```
+
+### Project dependency graph
+
+```
+common ◄── db ◄── auth ◄──┬── sftp ──┐
+              ▲            │          │
+              └── media ◄──┘          ├──► server (main)
+                    ▲                 │
+                    └──── api ◄───────┤
+                                web ──┘   (static assets jar)
+```
+
+- `sftp` and `api` both call `media.IngestService`, so browser and SFTP uploads go through the same path.
+- `server` is the only executable project. It starts Jooby/Undertow (8080), the SSHD server (2222) and the transcode workers in one JVM.
+
+### Build details
+
+- **Root `dependencies.gradle`**: `ext.versions = [jooby: '4.x', sshd: '2.x', hikari: '…', jcabiJdbc: '…', postgres: '42.7.x', flyway: '11.x', unboundid: '7.x', javaJwt: '4.x', lombok: '1.18.4x', junit: '…', assertj: '…', testcontainers: '…']` and `ext.libs = [ … 'group:artifact:${versions.x}' … ]`. Exact latest versions get pinned when the files are written.
+- **Root `build.gradle`**: `apply from: 'dependencies.gradle'`; a `subprojects {}` block applies `java-library`, sets `java.toolchain.languageVersion = JavaLanguageVersion.of(25)`, adds Lombok (`compileOnly` + `annotationProcessor`, and the same for tests), JUnit Platform, and `-parameters` (Jooby MVC needs it).
+- **`youstream-web/build.gradle`**: `com.github.node-gradle.node` plugin using the Node.js on PATH (`download = false`). Tasks: `npmInstall` → `npmBuild` (`tsc --noEmit && vite build`); `check` runs `npmTest` (Vitest). `processResources` copies `dist/` into `public/` inside the jar.
+- Logging: `logback.xml` ships on the classpath in `youstream-server/src/main/resources`.
+- **`youstream-server/build.gradle`**: `application` plugin, `mainClass = 'com.youstream.server.YouStreamServer'`. `installDist`/`distZip` produce a runnable distribution with `conf/`.
+- The wrapper (`gradlew`, 9.1.0) is committed. Locally Gradle is installed at `C:\opt\gradle-9.1.0`.
+- Pinned versions (Phase 0): Jooby 4.6.0 (Undertow 2.4.4, `jooby-jackson3`), SSHD 2.20.1, HikariCP 7.1.0, jcabi-jdbc 0.19.0, PostgreSQL JDBC 42.7.14, Flyway 13.11.1, UnboundID 7.0.5, java-jwt 4.6.2, Lombok 1.18.48, JUnit 6.1.3; frontend Solid 1.9, Vite 8, Tailwind 4.3, TypeScript 5.9, Vitest 5 with happy-dom.
+
+## 3. Configuration
+
+`conf/application.conf` (HOCON, which Jooby reads natively). Every value can be overridden by an environment variable:
+
+```hocon
+db { url = ${?DB_URL}, user = ${?DB_USER}, password = ${?DB_PASSWORD}, poolSize = 10 }
+ldap {
+  url = "ldaps://dc.example.com:636"      # LDAP_URL
+  domain = "example.com"                  # UPN suffix for bind: user@domain
+  baseDn = "DC=example,DC=com"
+  requiredGroup = ""                      # optional: only members of this group may log in
+  adminGroup = ""                         # optional: moderation rights
+}
+jwt { secret = ${?JWT_SECRET}, accessTtl = 15m, refreshTtl = 30d }
+storage { root = "./data" }
+upload { maxBytes = 10G, chunkBytes = 16M }
+sftp { port = 2222, hostKey = "./data/ssh/host_key", maxFileBytes = 10G }
+media { ffmpeg = "ffmpeg", ffprobe = "ffprobe", workers = 2, segmentSeconds = 6 }
+server { port = 8080 }
+```
+
+Secrets (DB password, JWT secret) go only into the git-ignored `conf/local.conf` or environment variables.
+
+## 4. Data model (Flyway migrations in `youstream-db/src/main/resources/db/migration`)
+
+Internal keys are `bigserial`. Public URLs use an 11-character random base62 `public_id`. Status and enum-like columns are `text` with `CHECK` constraints instead of PG enums, which keeps jcabi-jdbc parameter binding simple.
+
+| Table | Key columns |
+|---|---|
+| `users` | id, `ad_object_guid` (unique, stable AD identity), username (sAMAccountName), display_name, email, `handle` (unique channel slug), avatar_path, banner_path, bio, is_admin, created_at, last_login_at |
+| `refresh_tokens` | id, user_id, token_hash, expires_at, revoked_at, user_agent |
+| `ssh_keys` | id, user_id, name, key_type, fingerprint_sha256 (unique), public_key (OpenSSH text), created_at, last_used_at |
+| `videos` | id, public_id, owner_id, title, description, visibility (`PUBLIC`/`UNLISTED`/`PRIVATE`), status (`UPLOADING`/`UPLOADED`/`PROCESSING`/`READY`/`FAILED`), source (`WEB`/`SFTP`), original_filename, size_bytes, duration_ms, width, height, view_count, like_count, dislike_count, comment_count, created_at, published_at, `search tsvector GENERATED ALWAYS AS (…title A, description B…) STORED` + GIN index |
+| `video_renditions` | video_id, height, bitrate_kbps, playlist_path |
+| `transcode_jobs` | id, video_id, status (`QUEUED`/`RUNNING`/`DONE`/`FAILED`), progress, attempts, locked_by, locked_at, error, run_after, created_at |
+| `upload_sessions` | id (uuid text), user_id, filename, total_bytes, received_bytes, created_at, expires_at |
+| `comments` | id, video_id, user_id, parent_id (one reply level, as on YouTube), body, created_at, edited_at, deleted_at |
+| `video_reactions` | (video_id, user_id) PK, value (+1/−1), created_at |
+| `subscriptions` | (subscriber_id, channel_user_id) PK, created_at |
+| `playlists` | id, public_id, owner_id, title, description, visibility, created_at |
+| `playlist_items` | (playlist_id, video_id) PK, position |
+| `video_views` | video_id, viewer_key (user id or hashed IP+UA), viewed_on (date). Unique per day, so view counts are deduplicated |
+
+Counters (`like_count`, `comment_count`, `view_count`) are updated in the same transaction as the row change.
+
+### Repository pattern (jcabi-jdbc)
+
+```java
+@RequiredArgsConstructor
+public class VideoRepository {
+    private final DataSource ds;
+
+    public Optional<Video> findByPublicId(String publicId) throws SQLException {
+        return new JdbcSession(ds)
+            .sql("SELECT * FROM videos WHERE public_id = ?")
+            .set(publicId)
+            .select(new ListOutcome<>(VideoMapper::map))
+            .stream().findFirst();
+    }
+}
+```
+
+Transactions use `new JdbcSession(ds).autocommit(false) … .commit()`. Mappers are small static `ResultSet → @Builder` functions.
+
+## 5. Authentication & authorization (`youstream-auth`)
+
+**AD login (`AdAuthenticator`)**
+1. Bind to `ldaps://` as `username@domain` (UPN) with the supplied password (UnboundID `SimpleBindRequest`). Plain `ldap://` is refused unless StartTLS is configured.
+2. On success, search `(&(objectClass=user)(sAMAccountName=…))` under `baseDn` for `objectGUID, sAMAccountName, displayName, mail, memberOf`. Filter values are escaped.
+3. Optionally require membership of `requiredGroup` (checked with the `LDAP_MATCHING_RULE_IN_CHAIN` OID `1.2.840.113556.1.4.1941` for nested groups). `adminGroup` sets `is_admin`.
+4. Upsert into `users` keyed by `objectGUID`. Create a unique `handle` from the username on first login.
+
+The SFTP password authenticator uses the same class.
+
+**Web tokens**
+- `POST /api/auth/login` returns a short-lived access JWT (HS256, 15 min, claims: `sub`, `handle`, `admin`) in the body and sets a refresh token as an `HttpOnly; Secure; SameSite=Strict` cookie. Only a hash of the refresh token is stored, and it rotates on each use.
+- The frontend keeps the access token in memory and calls `/api/auth/refresh` when it expires or on a 401.
+- A Jooby `before` filter decodes the JWT into `ctx.getUser()`. Route-level checks: authenticated, owner of the resource, or admin.
+- Login has an in-memory rate limit per IP and username. Passwords are never logged.
+
+**Playback tokens (private/unlisted media)**
+- `/media/{publicId}/{token}/master.m3u8` takes an HMAC token (video id + user id + expiry, about 6 h) as a **path segment**. Relative segment URLs inside the playlists inherit it, so hls.js needs no custom headers and playlists don't have to be rewritten.
+- Public videos get a static token (`pub`).
+
+**SSH keys**
+- `GET/POST/DELETE /api/me/ssh-keys`. Keys are parsed with SSHD's `PublicKeyEntry` and only `ssh-ed25519`, `ecdsa-*`, and `rsa` ≥ 3072 are accepted.
+- The SHA-256 fingerprint is stored. A key can belong to only one user.
+
+## 6. Storage (`youstream-common`)
+
+```java
+public interface StorageService {
+    OutputStream create(String key);          // e.g. "originals/abc123/source.mp4"
+    InputStream open(String key);
+    InputStream openRange(String key, long from, long to);
+    long size(String key);
+    void move(String from, String to);
+    void deleteTree(String prefix);
+    Path localPath(String key);               // FFmpeg needs real paths; non-local impls stage to temp
+}
+```
+
+`LocalDiskStorage` normalizes keys and rejects any key that resolves outside `storage.root` (path-traversal guard).
+
+```
+data/
+├── incoming/{uploadSessionId}             # chunked browser uploads in progress
+├── sftp/{userId}/upload/                  # per-user SFTP inbox (virtual root)
+├── originals/{publicId}/source.{ext}
+├── hls/{publicId}/master.m3u8, {height}p/index.m3u8, {height}p/seg_00001.m4s …
+├── thumbs/{publicId}/poster.jpg, sprite.jpg, sprite.vtt
+├── avatars/{userId}.jpg
+└── ssh/host_key
+```
+
+## 7. Ingest & transcoding (`youstream-media`)
+
+**`IngestService.ingest(userId, Path file, Metadata meta, Source source)`**
+1. Run `ffprobe -print_format json -show_streams -show_format`. Reject the file if it has no video stream or the container is unreadable. The file is validated by content, never by extension.
+2. Move it to `originals/{publicId}/source.{ext}`, insert the `videos` row (`UPLOADED`), and enqueue a `transcode_jobs` row, all in one transaction.
+
+**Job queue**
+- Workers claim jobs with `UPDATE transcode_jobs SET status='RUNNING', locked_by=?, locked_at=now() WHERE id = (SELECT id FROM transcode_jobs WHERE status='QUEUED' AND run_after <= now() ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`.
+- Several JVMs can share the queue safely.
+- Polling runs every 2 s. A `LISTEN/NOTIFY` wake-up can be added later.
+- At startup, `RUNNING` jobs with a stale `locked_at` go back to `QUEUED`.
+- A failed job is retried up to 3 times with backoff, then marked `FAILED` along with its video.
+
+**`TranscodeWorker`**
+- Builds the ladder from the source height, never upscaling: 1080p / 5000k, 720p / 2800k, 480p / 1400k, 360p / 800k, plus AAC 128k audio.
+- A single FFmpeg run produces every rendition: `-filter_complex split+scale`, `-var_stream_map`, `-f hls -hls_time 6 -hls_playlist_type vod -hls_segment_type fmp4 -master_pl_name master.m3u8`, H.264 `-preset veryfast` with GOPs aligned to the segment length.
+- `-progress pipe:1` is parsed to update `transcode_jobs.progress`. The Studio UI polls this.
+- Also produces a poster frame at 10 % of the duration and a thumbnail sprite with a WebVTT file for scrub previews.
+- On success, writes `video_renditions` and sets the video to `READY` with `published_at`.
+- FFmpeg runs through `ProcessBuilder` with an argument list, never a shell string, and has a per-job timeout.
+
+FFmpeg isn't installed here yet (`winget install Gyan.FFmpeg`). Its path can be set in config.
+
+## 8. SFTP server (`youstream-sftp`)
+
+- `SshServer.setUpDefaultServer()` on port 2222. The `SimpleGeneratorHostKeyProvider` host key is persisted to `data/ssh/host_key` (Ed25519), so clients don't see a new host key after a restart.
+- **Auth**: a `PasswordAuthenticator` calls `AdAuthenticator`, and a `PublickeyAuthenticator` looks up the fingerprint in `ssh_keys`, checks that the key belongs to the login username, and updates `last_used_at`. The resolved `userId` is stored as a session attribute.
+- **Lockdown**: only `SftpSubsystemFactory` is registered. There is no shell or exec channel (`setShellFactory(null)`, no `CommandFactory`), all TCP/agent/X11 forwarding is rejected, the auth timeout is short, and failed auths are rate-limited.
+- **Filesystem**: a per-session `VirtualFileSystemFactory` rooted at `data/sftp/{userId}/`, with a single writable `upload/` directory. Users can't see anything outside their inbox.
+- **Ingest trigger**: an `SftpEventListener`.
+  - On `closed(...)` for a handle that was opened for writing, it schedules ingest.
+  - On `moved(...)` it handles clients that upload to `*.part`/`*.tmp` and rename at the end.
+  - Temp-suffixed files are ignored until they are renamed.
+  - A file whose size is still changing within a short debounce window is re-checked before ingest.
+- **Metadata**: an optional sidecar `name.json` (`{"title","description","visibility","playlist"}`) next to `name.mp4`. Otherwise the title is taken from the filename and visibility defaults to **PRIVATE**, so the user reviews the video in Studio before publishing.
+- **Limits**: `maxFileBytes` and a per-user quota are enforced with a write-size check in a custom `SftpFileSystemAccessor`.
+- After ingest, the file is moved out of the inbox, and a `name.mp4.status` text file (READY / FAILED: reason) is written back so scripted uploaders can poll for the result.
+
+## 9. HTTP API (`youstream-api`)
+
+Jooby app with `jooby-undertow`, the `jooby-jackson` JSON module, MVC controllers (`@Path`, `@GET`, …) generated by `jooby-apt`, and blocking work in worker mode. A global error handler maps exceptions to `{error, message}` with the right status. `jooby-openapi` can generate the API docs.
+
+| Area | Endpoints |
+|---|---|
+| Auth | `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/me`, `PATCH /api/me` (handle, bio, avatar) |
+| SSH keys | `GET/POST /api/me/ssh-keys`, `DELETE /api/me/ssh-keys/{id}` |
+| Upload (resumable) | `POST /api/uploads` → `{id, chunkBytes}`; `PUT /api/uploads/{id}` with `Content-Range` (idempotent chunks, resumable after a disconnect); `GET /api/uploads/{id}` (bytes received); `POST /api/uploads/{id}/complete` with metadata → IngestService |
+| Videos | `GET /api/videos?feed=latest\|trending&cursor=`, `GET /api/videos/{pid}`, `PATCH /api/videos/{pid}`, `DELETE /api/videos/{pid}`, `GET /api/videos/{pid}/status`, `POST /api/videos/{pid}/views`, `GET /api/me/videos` (Studio) |
+| Reactions | `PUT /api/videos/{pid}/reaction {value: 1\|-1}`, `DELETE /api/videos/{pid}/reaction` |
+| Comments | `GET /api/videos/{pid}/comments?cursor=&parent=`, `POST /api/videos/{pid}/comments`, `PATCH/DELETE /api/comments/{id}` |
+| Channels | `GET /api/channels/{handle}`, `GET /api/channels/{handle}/videos`, `GET /api/channels/{handle}/playlists`, `PUT/DELETE /api/channels/{handle}/subscription`, `GET /api/feed/subscriptions` |
+| Search | `GET /api/search?q=&type=video\|channel\|playlist&cursor=`, using `websearch_to_tsquery` ranked by `ts_rank` |
+| Playlists | `POST /api/playlists`, `GET/PATCH/DELETE /api/playlists/{pid}`, `POST /api/playlists/{pid}/items`, `PUT /api/playlists/{pid}/items/order`, `DELETE /api/playlists/{pid}/items/{videoPid}` |
+| Media | `GET /media/{pid}/{token}/**` (HLS playlists and segments with long-cache headers), `GET /thumbs/{pid}/poster.jpg`, `GET /avatars/{userId}.jpg`. All support range requests |
+| oEmbed | `GET /oembed?url=` (optional, so pasted links unfurl) |
+| SPA | Static assets from `public/` on the classpath, and any non-`/api`, non-`/media` route falls back to `index.html` |
+
+**Visibility rules** (enforced in one `VideoAccessPolicy` service):
+- **PUBLIC**: listed in feeds and search.
+- **UNLISTED**: anyone with the link can watch, but it isn't listed or searchable.
+- **PRIVATE**: owner (and admin) only.
+
+Pagination is keyset (cursor-based) everywhere. Security headers: CSP, `X-Content-Type-Options`, and `frame-ancestors 'none'` everywhere except `/embed/*`. CORS is enabled only in dev mode.
+
+## 10. Frontend (`youstream-web`)
+
+**Stack**: Vite, SolidJS, TypeScript (strict), Tailwind CSS, `@solidjs/router`, `@tanstack/solid-query`, `hls.js`. Tests use Vitest + `@solidjs/testing-library`. The Vite dev server proxies `/api`, `/media` and `/thumbs` to `localhost:8080`.
+
+```
+src/
+├── api/            # typed fetch client, auth/refresh interceptor, query hooks per resource
+├── auth/           # AuthProvider context (in-memory access token, silent refresh)
+├── components/     # VideoCard, VideoGrid, Player (hls.js + quality menu + sprite previews),
+│                   # CommentThread, LikeBar, SubscribeButton, ShareDialog, UploadDropzone, …
+├── layouts/        # AppShell (top bar w/ search, collapsible sidebar), EmbedLayout
+├── pages/
+│   ├── Home.tsx            # latest / trending grid
+│   ├── Watch.tsx           # player, title, like/dislike, channel + subscribe, description, comments, up-next
+│   ├── Channel.tsx         # banner, avatar, tabs: Videos / Playlists / About
+│   ├── Search.tsx
+│   ├── Subscriptions.tsx
+│   ├── Playlist.tsx
+│   ├── Upload.tsx          # drag & drop, chunked resumable upload with progress, metadata form
+│   ├── studio/Videos.tsx   # my videos, processing progress, edit metadata/visibility, delete
+│   ├── settings/SshKeys.tsx# add/remove keys + copy-paste SFTP connection instructions
+│   ├── Login.tsx           # AD username/password
+│   └── Embed.tsx           # bare player for /embed/:pid
+└── main.tsx, routes.tsx, index.css (Tailwind)
+```
+
+- **Share dialog**: copy link, copy link at the current timestamp (`?t=`), and copy the embed `<iframe>` snippet.
+- **Upload**: files are split into 16 MB chunks with `Blob.slice` and sent with up to 3 parallel `PUT`s. The upload id is kept in `localStorage` so it can resume after a reload.
+- **Theming**: light and dark themes through Tailwind's `dark:` variant.
+
+## 11. Server wiring (`youstream-server`)
+
+`YouStreamServer.main` does the following:
+1. Load the config (`application.conf` + `local.conf` + env).
+2. Build the Hikari `DataSource` and run Flyway `migrate()`.
+3. Construct the repositories and services. Wiring is manual constructor injection, with no DI container, to keep startup small and explicit.
+4. Start the transcode worker pool.
+5. Start SSHD.
+6. `Jooby.runApp(args, () -> new YouStreamApp(services))` on Undertow.
+
+A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go back to `QUEUED`) and closes Hikari.
+
+## 12. Testing strategy
+
+| Layer | Approach |
+|---|---|
+| Repositories | Testcontainers PostgreSQL (needs Docker), or a dedicated test schema on the remote DB, selected by a Gradle property |
+| AD auth | UnboundID `InMemoryDirectoryServer` seeded with AD-style entries (`sAMAccountName`, `userPrincipalName`, `memberOf`, `objectGUID`) |
+| Media | FFmpeg generates a 3 s `testsrc` clip at test time and the test asserts the HLS output. Skipped when FFmpeg is missing |
+| SFTP | Embedded server plus the SSHD `SftpClient`: password and key auth, upload with and without `.part` rename, chroot escape attempts, and rejection of shell/exec channels |
+| API | Jooby `MockRouter`/`JoobyTest` for routes, auth filters, and visibility rules |
+| Frontend | Vitest unit/component tests. Optional Playwright smoke test: login → upload → watch |
+
+`./gradlew build` runs everything, including the frontend build and tests.
+
+## 13. Phases & milestones
+
+| Phase | Deliverable | Done when |
+|---|---|---|
+| **0. Bootstrap** | Gradle 9.1.0 wrapper, `settings.gradle`, root `build.gradle` + `dependencies.gradle`, all 8 `youstream-*` skeletons each with `build.gradle` + `dependencies.gradle`, Lombok, `.gitignore`, `conf/`. **I'll ask you for the PostgreSQL and AD connection details here.** | `./gradlew build` is green; the server starts and serves a "hello" SPA page |
+| **1. DB & domain** | Hikari, Flyway V1 schema, Lombok models, jcabi-jdbc repositories with tests | Migrations apply to the remote DB; repository tests pass |
+| **2. Auth** | AD authenticator, user upsert, JWT + refresh, `/api/me`, Login page, AuthProvider | Logging in with an AD account works end to end |
+| **3. Core vertical slice** | StorageService, resumable upload API, IngestService, job queue, TranscodeWorker, media serving with playback tokens; Upload, Studio, Home, Watch pages with the HLS player | Upload in the browser → progress → watch with adaptive quality |
+| **4. SFTP** | SSHD server, AD password + SSH key auth, virtual inbox, event-driven ingest, sidecar metadata, status files; SSH Keys settings page | `sftp -P 2222 user@host` → `put clip.mp4` → video appears in Studio and plays |
+| **5. Social** | Comments (with replies), likes/dislikes, channel pages, subscriptions, subscription feed, view counting | All features usable in the UI and covered by API tests |
+| **6. Discovery & sharing** | Full-text search, playlists, visibility enforcement, share dialog, `/embed/:pid`, oEmbed | Unlisted links work, private videos return 404 to others, the embed iframe plays |
+| **7. Hardening & packaging** | Rate limits, quotas, security headers, error pages, cleanup jobs (expired upload sessions, orphaned files), `installDist` distribution, optional Dockerfile, README with run instructions | Fresh clone → configure `local.conf` → `./gradlew :youstream-server:run` works |
+
+## 14. Assumptions to confirm
+
+1. **Flyway** for migrations.
+2. **com.auth0:java-jwt** for JWTs.
+3. **UnboundID LDAP SDK** for AD: easier than JNDI, and the same library gives tests an in-memory server.
+4. One deployable process (`youstream-server`) runs the web app, SFTP and workers. Workers can be split out later because the job queue is DB-based.
+5. Ports: HTTP 8080, SFTP 2222. Default max upload size: 10 GB. SFTP uploads default to **PRIVATE**.
+6. Base Java package: `com.youstream.*`.
+7. Docker is **not** installed, so repository tests run against a separate test schema on the remote DB.
+8. Not in v1: tags/categories, notifications, live streaming, recommendations beyond "latest/trending/same channel", and moderation beyond admins deleting videos and comments.
