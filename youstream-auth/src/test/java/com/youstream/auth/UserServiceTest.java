@@ -44,6 +44,16 @@ class UserServiceTest {
     }
 
     @Test
+    void signInKeepsTheUsersOwnDisplayName() {
+        User user = service.signIn(identity(IdentityProvider.LDAP, "s-1", "alice", false));
+        service.repository().updateProfile(user.getId(), user.getHandle(), "Alice in Wonderland", "");
+
+        User again = service.signIn(identity(IdentityProvider.LDAP, "s-1", "alice", false));
+
+        assertThat(again.getDisplayName()).isEqualTo("Alice in Wonderland");
+    }
+
+    @Test
     void sameNameFromAnotherProviderGetsDistinctUser() {
         User ldap = service.signIn(identity(IdentityProvider.LDAP, "s-1", "alice", false));
         User entra = service.signIn(identity(IdentityProvider.ENTRA, "oid-1", "alice@contoso.com", false));

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, api, loginWithLdap, refreshSession, setAccessToken } from './client';
+import { ApiError, api, loginWithLdap, refreshSession, restoreSession, setAccessToken } from './client';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -58,6 +58,23 @@ describe('api client', () => {
     const [a, b] = await Promise.all([refreshSession(), refreshSession()]);
     expect(a).toEqual(b);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds requests until the page-load session restore finished', async () => {
+    let finishRefresh!: (r: Response) => void;
+    fetchMock
+      .mockImplementationOnce(() => new Promise<Response>((r) => (finishRefresh = r)))
+      .mockResolvedValueOnce(json({ id: 1 }));
+
+    const restore = restoreSession();
+    const me = api('/me');
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(1); // only the refresh so far
+
+    finishRefresh(json(session('restored')));
+    await restore;
+    await expect(me).resolves.toEqual({ id: 1 });
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer restored');
   });
 
   it('resolves null when the refresh cookie is missing', async () => {

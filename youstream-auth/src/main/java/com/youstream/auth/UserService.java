@@ -30,7 +30,8 @@ public class UserService {
             long userId;
             if (existing.isPresent()) {
                 userId = existing.get().getId();
-                users.updateFromIdentity(userId, identity.getDisplayName(), identity.getEmail(), identity.isAdmin());
+                // the display name is the user's own (editable on the Account page); email and admin follow the provider
+                users.updateFromIdentity(userId, existing.get().getDisplayName(), identity.getEmail(), identity.isAdmin());
             } else {
                 String base = baseName(identity);
                 userId = users.insert(User.builder()

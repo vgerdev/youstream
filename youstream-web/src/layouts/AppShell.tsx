@@ -42,6 +42,9 @@ export default function AppShell(props: ParentProps) {
                 >
                   + Upload
                 </A>
+                <A href="/subscriptions" class="text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
+                  Subscriptions
+                </A>
                 <A href="/studio" class="text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
                   Studio
                 </A>

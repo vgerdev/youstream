@@ -44,3 +44,8 @@ export function formatBytes(bytes: number | null | undefined): string {
 export function formatCount(n: number): string {
   return new Intl.NumberFormat(undefined, { notation: 'compact' }).format(n);
 }
+
+/** "1 view", "1.2K views" */
+export function countOf(n: number, singular: string, plural = `${singular}s`): string {
+  return `${formatCount(n)} ${n === 1 ? singular : plural}`;
+}

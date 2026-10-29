@@ -1,7 +1,7 @@
 import { Show } from 'solid-js';
 import { A } from '@solidjs/router';
 import type { Video } from '../api/videos';
-import { formatCount, formatDuration, timeAgo } from '../util/format';
+import { countOf, formatDuration, timeAgo } from '../util/format';
 
 export default function VideoCard(props: { video: Video }) {
   const v = () => props.video;
@@ -28,7 +28,7 @@ export default function VideoCard(props: { video: Video }) {
         <h3 class="line-clamp-2 font-semibold leading-snug">{v().title}</h3>
         <p class="text-sm text-neutral-500">{v().channel?.displayName}</p>
         <p class="text-sm text-neutral-500">
-          {formatCount(v().viewCount)} views · {timeAgo(v().publishedAt)}
+          {countOf(v().viewCount, 'view')} · {timeAgo(v().publishedAt)}
         </p>
       </div>
     </A>

@@ -23,6 +23,8 @@ public class VideoRepository {
     private static final String COLUMNS = "id, public_id, owner_id, title, description, visibility, status, source,"
         + " original_filename, original_path, size_bytes, duration_ms, width, height, error, view_count, like_count,"
         + " dislike_count, comment_count, created_at, updated_at, published_at";
+    /** Keyset paging start for "newest first" queries. */
+    private static final Instant FAR_FUTURE = Instant.parse("9999-12-31T00:00:00Z");
 
     private final Db db;
 
@@ -67,10 +69,46 @@ public class VideoRepository {
         return db.run(s -> s
             .sql("SELECT " + COLUMNS + " FROM videos WHERE visibility = 'PUBLIC' AND status = 'READY'"
                 + " AND (published_at, id) < (?, ?) ORDER BY published_at DESC, id DESC LIMIT ?")
-            .set(Rows.ts(beforePublishedAt != null ? beforePublishedAt : Instant.parse("9999-12-31T00:00:00Z")))
+            .set(Rows.ts(beforePublishedAt != null ? beforePublishedAt : FAR_FUTURE))
             .set(beforeId != null ? beforeId : Long.MAX_VALUE)
             .set(limit)
             .select(new ListOutcome<>(VideoRepository::map)));
+    }
+
+    /** A channel's public, ready videos, newest first. */
+    public List<Video> listPublicByOwner(long ownerId, Instant beforePublishedAt, Long beforeId, int limit) {
+        return db.run(s -> s
+            .sql("SELECT " + COLUMNS + " FROM videos WHERE owner_id = ? AND visibility = 'PUBLIC' AND status = 'READY'"
+                + " AND (published_at, id) < (?, ?) ORDER BY published_at DESC, id DESC LIMIT ?")
+            .set(ownerId)
+            .set(Rows.ts(beforePublishedAt != null ? beforePublishedAt : FAR_FUTURE))
+            .set(beforeId != null ? beforeId : Long.MAX_VALUE)
+            .set(limit)
+            .select(new ListOutcome<>(VideoRepository::map)));
+    }
+
+    /** Public, ready videos from the channels the user subscribes to, newest first. */
+    public List<Video> listSubscriptionFeed(long subscriberId, Instant beforePublishedAt, Long beforeId, int limit) {
+        return db.run(s -> s
+            .sql("SELECT " + prefixed("v") + " FROM videos v JOIN subscriptions sub ON sub.channel_user_id = v.owner_id"
+                + " WHERE sub.subscriber_id = ? AND v.visibility = 'PUBLIC' AND v.status = 'READY'"
+                + " AND (v.published_at, v.id) < (?, ?) ORDER BY v.published_at DESC, v.id DESC LIMIT ?")
+            .set(subscriberId)
+            .set(Rows.ts(beforePublishedAt != null ? beforePublishedAt : FAR_FUTURE))
+            .set(beforeId != null ? beforeId : Long.MAX_VALUE)
+            .set(limit)
+            .select(new ListOutcome<>(VideoRepository::map)));
+    }
+
+    public long countPublicByOwner(long ownerId) {
+        return db.run(s -> s
+            .sql("SELECT count(*) FROM videos WHERE owner_id = ? AND visibility = 'PUBLIC' AND status = 'READY'")
+            .set(ownerId)
+            .select(new ListOutcome<>(rs -> rs.getLong(1))).getFirst());
+    }
+
+    private static String prefixed(String alias) {
+        return alias + "." + COLUMNS.replace(", ", ", " + alias + ".");
     }
 
     public boolean updateMetadata(long id, String title, String description, Visibility visibility) {

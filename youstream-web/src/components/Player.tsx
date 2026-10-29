@@ -10,7 +10,13 @@ interface Level {
  * HLS player: hls.js (adaptive bitrate + quality menu) where Media Source Extensions exist, native HLS otherwise
  * (Safari/iOS).
  */
-export default function Player(props: { src: string; poster?: string | null; startAt?: number }) {
+export default function Player(props: {
+  src: string;
+  poster?: string | null;
+  startAt?: number;
+  /** Fired once, after a few seconds of actual playback (used to count a view). */
+  onWatched?: () => void;
+}) {
   let video!: HTMLVideoElement;
   let hls: Hls | undefined;
   const [levels, setLevels] = createSignal<Level[]>([]);
@@ -35,6 +41,21 @@ export default function Player(props: { src: string; poster?: string | null; sta
       setError('Your browser cannot play this video.');
     }
     if (props.startAt) video.currentTime = props.startAt;
+
+    // a view = 3 s of playback, or half of a shorter video
+    let played = 0;
+    let last = 0;
+    let fired = false;
+    video.addEventListener('timeupdate', () => {
+      const t = video.currentTime;
+      if (!video.paused && t > last && t - last < 1.5) played += t - last;
+      last = t;
+      const needed = Math.min(3, (video.duration || 6) / 2);
+      if (!fired && played >= needed) {
+        fired = true;
+        props.onWatched?.();
+      }
+    });
   });
 
   onCleanup(() => hls?.destroy());

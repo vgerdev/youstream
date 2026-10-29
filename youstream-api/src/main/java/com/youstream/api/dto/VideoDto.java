@@ -22,6 +22,14 @@ public class VideoDto {
     public static class Channel {
         private String handle;
         private String displayName;
+        /** Watch page only. */
+        private Long subscriberCount;
+        /** Watch page only; null for anonymous callers and the owner. */
+        private Boolean subscribed;
+
+        public Channel(String handle, String displayName) {
+            this(handle, displayName, null, null);
+        }
     }
 
     private String publicId;
@@ -44,6 +52,8 @@ public class VideoDto {
     /** HLS master playlist; set once transcoding finished. */
     private String playbackUrl;
     private boolean canEdit;
+    /** Watch page only: the caller's reaction (1, -1, 0); null when anonymous. */
+    private Integer myReaction;
 
     // owner only
     private String originalFilename;

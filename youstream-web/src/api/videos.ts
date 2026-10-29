@@ -18,10 +18,19 @@ export interface Video {
   commentCount: number;
   createdAt: string;
   publishedAt: string | null;
-  channel: { handle: string; displayName: string } | null;
+  channel: {
+    handle: string;
+    displayName: string;
+    /** watch page only */
+    subscriberCount?: number | null;
+    /** watch page only; null when anonymous or your own channel */
+    subscribed?: boolean | null;
+  } | null;
   posterUrl: string | null;
   playbackUrl: string | null;
   canEdit: boolean;
+  /** watch page only: 1, -1, 0; null when anonymous */
+  myReaction?: number | null;
   // owner only
   originalFilename?: string | null;
   sizeBytes?: number | null;

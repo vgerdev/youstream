@@ -3,10 +3,13 @@ package com.youstream.api.video;
 import com.youstream.api.AppServices;
 import com.youstream.api.auth.CurrentUser;
 import com.youstream.api.dto.Page;
+import com.youstream.api.dto.SocialDtos;
 import com.youstream.api.dto.VideoDto;
 import com.youstream.api.dto.VideoUpdate;
 import com.youstream.auth.token.AccessClaims;
 import com.youstream.common.model.Video;
+import com.youstream.common.model.VideoStatus;
+import com.youstream.db.repo.SocialRepository;
 import com.youstream.db.repo.TranscodeJobRepository;
 import com.youstream.db.repo.UserRepository;
 import com.youstream.db.repo.VideoRepository;
@@ -18,7 +21,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.List;
 
 /** Feed, watch-page data, Studio listing and owner edits. */
@@ -31,21 +38,58 @@ public final class VideoRoutes {
     private final VideoRepository videos;
     private final VideoViews views;
     private final PublicVideoCache publicVideos;
+    private final SocialRepository social;
 
     public VideoRoutes(AppServices services, PublicVideoCache publicVideos) {
         this.s = services;
         this.publicVideos = publicVideos;
         this.videos = new VideoRepository(services.getDb());
+        this.social = new SocialRepository(services.getDb());
         this.views = new VideoViews(new UserRepository(services.getDb()), new TranscodeJobRepository(services.getDb()),
             services.getPlaybackTokens());
     }
 
     public void install(Jooby app) {
         app.get("/api/videos", this::feed);
-        app.get("/api/videos/{publicId}", ctx -> views.dto(viewable(ctx), ctx.getUser()));
+        app.get("/api/videos/{publicId}", ctx -> views.watchDto(viewable(ctx), ctx.getUser(), social));
         app.patch("/api/videos/{publicId}", this::update);
         app.delete("/api/videos/{publicId}", this::delete);
+        app.put("/api/videos/{publicId}/reaction", this::react);
+        app.post("/api/videos/{publicId}/views", this::view);
         app.get("/api/me/videos", this::mine);
+    }
+
+    private SocialDtos.ReactionState react(Context ctx) {
+        AccessClaims caller = CurrentUser.require(ctx);
+        Video video = viewable(ctx);
+        int value = ctx.body(SocialDtos.Reaction.class).getValue();
+        if (value < -1 || value > 1) {
+            throw new StatusCodeException(StatusCode.BAD_REQUEST, "value must be 1 (like), -1 (dislike) or 0 (none)");
+        }
+        SocialRepository.Counts counts = social.react(video.getId(), caller.getUserId(), value);
+        return new SocialDtos.ReactionState(value, counts.likes(), counts.dislikes());
+    }
+
+    /** Called by the player after a few seconds of playback; counted once per viewer per day. */
+    private SocialDtos.Views view(Context ctx) {
+        Video video = viewable(ctx);
+        if (video.getStatus() != VideoStatus.READY) {
+            return new SocialDtos.Views(video.getViewCount());
+        }
+        AccessClaims caller = ctx.getUser();
+        String viewer = caller != null
+            ? "u:" + caller.getUserId()
+            // anonymous: a hash, so raw IP addresses are never stored
+            : "a:" + sha256(ctx.getRemoteAddress() + "|" + ctx.header("User-Agent").value(""));
+        return new SocialDtos.Views(social.recordView(video.getId(), viewer));
+    }
+
+    private static String sha256(String s) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** Latest public videos; cursor is {@code <publishedAtMillis>_<id>}. */

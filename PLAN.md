@@ -270,9 +270,9 @@ Jooby app with `jooby-undertow`, the `jooby-jackson` JSON module, MVC controller
 | SSH keys | `GET/POST /api/me/ssh-keys`, `DELETE /api/me/ssh-keys/{id}` |
 | Upload (resumable) | `POST /api/uploads` → `{id, chunkBytes}`; `PUT /api/uploads/{id}` with `Content-Range` (chunks in order; re-sent chunks are accepted, a gap returns 409 with the current offset); `GET /api/uploads/{id}` (bytes received); `POST /api/uploads/{id}/complete` with metadata → IngestService |
 | Videos | `GET /api/videos?feed=latest\|trending&cursor=`, `GET /api/videos/{pid}`, `PATCH /api/videos/{pid}`, `DELETE /api/videos/{pid}`, `GET /api/videos/{pid}/status`, `POST /api/videos/{pid}/views`, `GET /api/me/videos` (Studio) |
-| Reactions | `PUT /api/videos/{pid}/reaction {value: 1\|-1}`, `DELETE /api/videos/{pid}/reaction` |
+| Reactions | `PUT /api/videos/{pid}/reaction {value: 1\|-1\|0}` (0 clears) |
 | Comments | `GET /api/videos/{pid}/comments?cursor=&parent=`, `POST /api/videos/{pid}/comments`, `PATCH/DELETE /api/comments/{id}` |
-| Channels | `GET /api/channels/{handle}`, `GET /api/channels/{handle}/videos`, `GET /api/channels/{handle}/playlists`, `PUT/DELETE /api/channels/{handle}/subscription`, `GET /api/feed/subscriptions` |
+| Channels | `GET /api/channels/{handle}`, `GET /api/channels/{handle}/videos`, `GET /api/channels/{handle}/playlists` (Phase 6), `PUT/DELETE /api/channels/{handle}/subscription`, `GET /api/feed/subscriptions`, `GET /api/me/subscriptions`, `PATCH /api/me` (handle, display name, bio). Channel pages live at `/c/{handle}` in the SPA |
 | Search | `GET /api/search?q=&type=video\|channel\|playlist&cursor=`, using `websearch_to_tsquery` ranked by `ts_rank` |
 | Playlists | `POST /api/playlists`, `GET/PATCH/DELETE /api/playlists/{pid}`, `POST /api/playlists/{pid}/items`, `PUT /api/playlists/{pid}/items/order`, `DELETE /api/playlists/{pid}/items/{videoPid}` |
 | Media | `GET /media/{pid}/{token}/**` (HLS playlists and segments with long-cache headers), `GET /thumbs/{pid}/poster.jpg`, `GET /avatars/{userId}.jpg`. All support range requests |
@@ -351,7 +351,7 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 | **2. Auth** ✅ | `youstream-devldap`, LDAP authenticator, Entra OIDC, `user_identities` + user upsert, JWT + refresh rotation with reuse detection, login throttling, `/api/me`, account linking, Login and Account pages, AuthProvider | Signing in as `alice` (dev LDAP) and with a Microsoft account both work end to end |
 | **3. Core vertical slice** ✅ | StorageService, resumable upload API, IngestService, job queue, TranscodeWorker, media serving with playback tokens; Upload, Studio, Home, Watch pages with the HLS player | Upload in the browser → progress → watch with adaptive quality |
 | **4. SFTP** ✅ | SSHD server, LDAP password + SSH key auth, virtual inbox, event-driven ingest, sidecar metadata, status files; SSH Keys settings page | `sftp -P 2222 user@host` → `put clip.mp4` → video appears in Studio and plays |
-| **5. Social** | Comments (with replies), likes/dislikes, channel pages, subscriptions, subscription feed, view counting | All features usable in the UI and covered by API tests |
+| **5. Social** ✅ | Comments (with replies), likes/dislikes, channel pages, subscriptions, subscription feed, view counting | All features usable in the UI and covered by API tests |
 | **6. Discovery & sharing** | Full-text search, playlists, visibility enforcement, share dialog, `/embed/:pid`, oEmbed | Unlisted links work, private videos return 404 to others, the embed iframe plays |
 | **7. Hardening & packaging** | Rate limits, quotas, security headers, error pages, cleanup jobs (expired upload sessions, orphaned files), `installDist` distribution, optional Dockerfile, README with run instructions | Fresh clone → configure `local.conf` → `./gradlew :youstream-server:run` works |
 
@@ -365,3 +365,11 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 6. Base Java package: `com.youstream.*`.
 7. Docker is **not** installed, so repository tests run against the `youstream_test` schema of the remote `youstream` database (Flyway cleans and migrates it once per test run). The app uses schema `public` of the same database, as role `youstream`.
 8. Not in v1: tags/categories, notifications, live streaming, recommendations beyond "latest/trending/same channel", and moderation beyond admins deleting videos and comments.
+
+## 15. Notes from implementation
+
+- **Display names** belong to the user once the account exists (editable on the Account page); later sign-ins only refresh email and admin rights from the identity provider.
+- **Counters** (`like_count`, `dislike_count`, `comment_count`, `reply_count`, `subscriber_count`, `view_count`) are updated in the same transaction as the change; reactions lock the video row so concurrent likes stay exact.
+- **Views** count once per viewer per video per day, after 3 s of playback (or half of a shorter video). Anonymous viewers are keyed by a SHA-256 of IP and User-Agent, so raw IPs are never stored.
+- **Comments** are soft-deleted; a deleted top-level comment stays (as "deleted") while it still has replies. Authors edit; authors, the video owner and admins delete.
+- **Frontend session restore** starts before the first render and every API call waits for it, so per-user fields (my reaction, subscribed, edit rights) are correct on a direct page load.

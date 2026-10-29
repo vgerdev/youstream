@@ -42,6 +42,14 @@ export interface Health {
 // The access token lives only in memory; the refresh token is an HttpOnly cookie the browser sends to /api/auth.
 let accessToken: string | null = null;
 let refreshing: Promise<Session | null> | null = null;
+/** The page-load session restore; every request waits for it so the first calls are not sent anonymously. */
+let restoring: Promise<Session | null> | null = null;
+
+/** Starts restoring the session from the refresh cookie (once per page load) and returns it. */
+export function restoreSession(): Promise<Session | null> {
+  restoring ??= refreshSession();
+  return restoring;
+}
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
@@ -93,6 +101,7 @@ interface RequestOptions {
 
 /** Request to /api with the access token; on 401 it refreshes once and retries. */
 export async function apiResponse(path: string, options: RequestOptions = {}): Promise<Response> {
+  await restoring?.catch(() => null);
   const send = () => {
     const headers: Record<string, string> = { Accept: 'application/json', ...options.headers };
     if (options.body !== undefined) headers['Content-Type'] = 'application/json';

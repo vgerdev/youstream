@@ -56,5 +56,8 @@ subprojects {
         usesService(testDatabaseLock)
         maxParallelForks = 1
         systemProperty 'youstream.conf', rootProject.file('conf/local.conf').absolutePath
+        // media tests are skipped without FFmpeg; rerun them when its location changes
+        inputs.property('ffmpeg', System.getenv('FFMPEG') ?: 'PATH')
+        inputs.property('ffprobe', System.getenv('FFPROBE') ?: 'PATH')
     }
 }

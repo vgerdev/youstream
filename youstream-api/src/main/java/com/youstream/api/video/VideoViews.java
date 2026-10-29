@@ -8,6 +8,7 @@ import com.youstream.common.model.User;
 import com.youstream.common.model.Video;
 import com.youstream.common.model.VideoStatus;
 import com.youstream.common.model.Visibility;
+import com.youstream.db.repo.SocialRepository;
 import com.youstream.db.repo.TranscodeJobRepository;
 import com.youstream.db.repo.UserRepository;
 import io.jooby.StatusCode;
@@ -56,6 +57,20 @@ public class VideoViews {
 
     public VideoDto dto(Video video, AccessClaims caller) {
         return dtos(List.of(video), caller).getFirst();
+    }
+
+    /** {@link #dto} plus what the Watch page needs: the caller's reaction and the channel's subscription state. */
+    public VideoDto watchDto(Video video, AccessClaims caller, SocialRepository social) {
+        VideoDto dto = dto(video, caller);
+        users.findById(video.getOwnerId()).ifPresent(owner -> {
+            boolean mine = caller != null && caller.getUserId() == owner.getId();
+            dto.setChannel(new VideoDto.Channel(owner.getHandle(), owner.getDisplayName(), owner.getSubscriberCount(),
+                caller == null || mine ? null : social.isSubscribed(caller.getUserId(), owner.getId())));
+        });
+        if (caller != null) {
+            dto.setMyReaction(social.reaction(video.getId(), caller.getUserId()).orElse(0));
+        }
+        return dto;
     }
 
     public List<VideoDto> dtos(List<Video> videos, AccessClaims caller) {

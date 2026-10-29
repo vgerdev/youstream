@@ -4,6 +4,8 @@ import com.youstream.api.auth.AuthFilter;
 import com.youstream.api.auth.AuthRoutes;
 import com.youstream.api.auth.SshKeyRoutes;
 import com.youstream.auth.SshKeyService;
+import com.youstream.api.social.ChannelRoutes;
+import com.youstream.api.social.CommentRoutes;
 import com.youstream.api.video.MediaRoutes;
 import com.youstream.api.video.PublicVideoCache;
 import com.youstream.api.video.UploadRoutes;
@@ -46,6 +48,8 @@ public class YouStreamApp extends Jooby {
             new VideoRoutes(services, publicVideos).install(this);
             new UploadRoutes(services).install(this);
             new MediaRoutes(services, publicVideos).install(this);
+            new CommentRoutes(services).install(this);
+            new ChannelRoutes(services).install(this);
         }
 
         get("/api/health", ctx -> {

@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { authErrorMessage } from '../auth/errors';
 import LdapLoginForm from '../components/LdapLoginForm';
 import MicrosoftButton from '../components/MicrosoftButton';
+import ProfileForm from '../components/ProfileForm';
 import SftpSection from '../components/SftpSection';
 
 const PROVIDER_NAMES: Record<IdentityProvider, string> = {
@@ -47,6 +48,8 @@ export default function Account() {
               <p class="text-neutral-500">{user().email}</p>
             </Show>
           </header>
+
+          <ProfileForm />
 
           <section class="space-y-3">
             <h2 class="text-lg font-semibold">Sign-in methods</h2>
