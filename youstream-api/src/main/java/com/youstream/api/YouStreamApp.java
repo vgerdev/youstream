@@ -13,11 +13,15 @@ import java.util.Map;
  */
 public class YouStreamApp extends Jooby {
 
-    public YouStreamApp() {
+    public YouStreamApp(AppServices services) {
         install(new Jackson3Module());
 
         path("/api", () -> {
-            get("/health", ctx -> Map.of("status", "UP"));
+            get("/health", ctx -> {
+                boolean db = services.getDatabaseHealthy().getAsBoolean();
+                ctx.setResponseCode(db ? StatusCode.OK : StatusCode.SERVICE_UNAVAILABLE);
+                return Map.of("status", db ? "UP" : "DOWN", "database", db ? "UP" : "DOWN");
+            });
 
             // unknown API paths must not fall through to the SPA
             get("/*", ctx -> ctx.send(StatusCode.NOT_FOUND));

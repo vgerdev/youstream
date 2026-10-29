@@ -6,12 +6,19 @@ db {
   password = "change-me"
 }
 
-ldap {
-  url = "ldaps://dc01.corp.example.com:636"
-  domain = "corp.example.com"
-  baseDn = "DC=corp,DC=example,DC=com"
-  # requiredGroup = "CN=YouStream Users,OU=Groups,DC=corp,DC=example,DC=com"
-  # adminGroup = "CN=YouStream Admins,OU=Groups,DC=corp,DC=example,DC=com"
+# Only needed to point at a real directory; defaults use the dev LDAP server (youstream-devldap)
+# ldap {
+#   url = "ldaps://ldap.example.com:636"
+#   baseDn = "dc=example,dc=com"
+#   bindDn = "cn=youstream,ou=system,dc=example,dc=com"
+#   bindPassword = "change-me"
+# }
+
+entra {
+  enabled = true
+  tenantId = "00000000-0000-0000-0000-000000000000"
+  clientId = "00000000-0000-0000-0000-000000000000"
+  clientSecret = "change-me"
 }
 
 jwt {

@@ -1,3 +1,14 @@
+plugins {
+    // TestDatabase is shared with the test suites of other subprojects
+    id 'java-test-fixtures'
+}
+
 description = 'HikariCP connection pool, Flyway migrations and jcabi-jdbc repositories'
 
 apply from: 'dependencies.gradle'
+
+tasks.withType(Test).configureEach {
+    // repository tests share one remote test schema
+    maxParallelForks = 1
+    systemProperty 'youstream.conf', rootProject.file('conf/local.conf').absolutePath
+}

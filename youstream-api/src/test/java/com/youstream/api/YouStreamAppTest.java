@@ -10,13 +10,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class YouStreamAppTest {
 
-    private final MockRouter router = new MockRouter(new YouStreamApp());
-
     @Test
-    void healthReportsUp() {
+    void healthReportsUpWhenDatabaseIsHealthy() {
+        MockRouter router = new MockRouter(new YouStreamApp(AppServices.builder().databaseHealthy(() -> true).build()));
+
         router.get("/api/health", rsp -> {
             assertThat(rsp.getStatusCode()).isEqualTo(StatusCode.OK);
-            assertThat(rsp.value()).isEqualTo(Map.of("status", "UP"));
+            assertThat(rsp.value()).isEqualTo(Map.of("status", "UP", "database", "UP"));
+        });
+    }
+
+    @Test
+    void healthReportsDownWhenDatabaseIsUnavailable() {
+        MockRouter router = new MockRouter(new YouStreamApp(AppServices.builder().databaseHealthy(() -> false).build()));
+
+        router.get("/api/health", rsp -> {
+            assertThat(rsp.getStatusCode()).isEqualTo(StatusCode.SERVICE_UNAVAILABLE);
+            assertThat(rsp.value()).isEqualTo(Map.of("status", "DOWN", "database", "DOWN"));
         });
     }
 }

@@ -6,4 +6,8 @@ dependencies {
     implementation libs.flywayCore
     implementation libs.flywayPostgres
     implementation libs.postgres
+
+    testFixturesApi platform(libs.junitBom)
+    testFixturesApi libs.junitJupiter
+    testFixturesImplementation libs.typesafeConfig
 }

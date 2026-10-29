@@ -14,7 +14,7 @@ A self-hosted video sharing platform: upload (browser or SFTP), transcode to ada
 | DB access | `jcabi-jdbc` (`JdbcSession`) on a **HikariCP** pool |
 | Migrations | Flyway (assumption — you didn't name a tool) |
 | Models | Lombok `@Data` / `@Builder` (Lombok ≥ 1.18.40 for JDK 25) |
-| Auth | **Active Directory** bind over LDAPS (UnboundID LDAP SDK) → JWT for the web; SFTP accepts the AD password and/or SSH public keys the user registers in their profile |
+| Auth | Two login methods, both ending in a YouStream JWT: **"Sign in with Microsoft"** (Microsoft Entra ID, OpenID Connect authorization-code flow) and **LDAP username/password** (UnboundID LDAP SDK, works with OpenLDAP/lldap/AD). SFTP accepts the LDAP password and/or SSH public keys registered in the profile (the only SFTP option for Entra users). Development and tests use an embedded LDAP server (`youstream-devldap`) |
 | Media | FFmpeg/ffprobe → multi-bitrate **HLS** + thumbnails, run by a background worker |
 | Storage | Local disk behind a pluggable `StorageService` interface (S3/MinIO can be added later) |
 | Frontend | SolidJS + TypeScript + Vite + Tailwind CSS, `@solidjs/router`, `@tanstack/solid-query`, `hls.js` |
@@ -31,10 +31,12 @@ youstream/
 ├── gradle/wrapper/…              # Gradle 9.1.0
 ├── conf/
 │   ├── application.conf          # defaults, committed
-│   └── local.conf                # secrets (DB, AD, JWT) — git-ignored
+│   ├── dev-ldap.ldif             # seed users/groups for the dev LDAP server
+│   └── local.conf                # secrets (DB, Entra, JWT) — git-ignored
 ├── youstream-common/             # domain models, config, StorageService, utilities
 ├── youstream-db/                 # HikariCP, Flyway migrations, jcabi-jdbc repositories
-├── youstream-auth/               # AD authenticator, JWT, SSH key service, playback-token signer
+├── youstream-auth/               # LDAP + Entra OIDC login, JWT, SSH key service, playback-token signer
+├── youstream-devldap/            # embedded UnboundID LDAP server for dev/testing (gradle :youstream-devldap:run)
 ├── youstream-media/              # ffprobe/ffmpeg wrappers, job queue, transcode worker, IngestService
 ├── youstream-sftp/               # MINA SSHD server, SFTP ingest
 ├── youstream-api/                # Jooby routes/controllers, DTOs, error handling, media + SPA serving
@@ -60,6 +62,8 @@ common ◄── db ◄── auth ◄──┬── sftp ──┐
                     ▲                 │
                     └──── api ◄───────┤
                                 web ──┘   (static assets jar)
+
+devldap (standalone; also a test dependency of auth and sftp)
 ```
 
 - `sftp` and `api` both call `media.IngestService`, so browser and SFTP uploads go through the same path.
@@ -82,12 +86,21 @@ common ◄── db ◄── auth ◄──┬── sftp ──┐
 ```hocon
 db { url = ${?DB_URL}, user = ${?DB_USER}, password = ${?DB_PASSWORD}, poolSize = 10 }
 ldap {
-  url = "ldaps://dc.example.com:636"      # LDAP_URL
-  domain = "example.com"                  # UPN suffix for bind: user@domain
-  baseDn = "DC=example,DC=com"
+  enabled = true
+  url = "ldap://localhost:10389"          # LDAP_URL; dev LDAP by default, ldaps:// in production
+  mode = "search"                         # search-then-bind, or "upn" (AD: bind as user@upnDomain)
+  baseDn, bindDn, bindPassword, userFilter = "(&(objectClass=inetOrgPerson)(uid={0}))"
+  attributes { id = "entryUUID", username = "uid", displayName = "cn", email = "mail", memberOf = "memberOf" }
   requiredGroup = ""                      # optional: only members of this group may log in
-  adminGroup = ""                         # optional: moderation rights
+  adminGroup = "cn=youstream-admins,…"    # optional: moderation rights
 }
+entra {
+  enabled, tenantId, clientId, clientSecret
+  redirectUri = "http://localhost:8080/api/auth/microsoft/callback"
+  scopes = "openid profile email User.Read"
+  adminRole = "YouStream.Admin"           # app role value that grants admin
+}
+devLdap { port = 10389, ldif = "conf/dev-ldap.ldif" }
 jwt { secret = ${?JWT_SECRET}, accessTtl = 15m, refreshTtl = 30d }
 storage { root = "./data" }
 upload { maxBytes = 10G, chunkBytes = 16M }
@@ -96,7 +109,7 @@ media { ffmpeg = "ffmpeg", ffprobe = "ffprobe", workers = 2, segmentSeconds = 6 
 server { port = 8080 }
 ```
 
-Secrets (DB password, JWT secret) go only into the git-ignored `conf/local.conf` or environment variables.
+Secrets (DB password, JWT secret, Entra client secret, LDAP bind password) go only into the git-ignored `conf/local.conf` or environment variables.
 
 ## 4. Data model (Flyway migrations in `youstream-db/src/main/resources/db/migration`)
 
@@ -104,7 +117,8 @@ Internal keys are `bigserial`. Public URLs use an 11-character random base62 `pu
 
 | Table | Key columns |
 |---|---|
-| `users` | id, `ad_object_guid` (unique, stable AD identity), username (sAMAccountName), display_name, email, `handle` (unique channel slug), avatar_path, banner_path, bio, is_admin, created_at, last_login_at |
+| `users` | id, username (unique; used for SFTP login), display_name, email, `handle` (unique channel slug), avatar_path, banner_path, bio, is_admin, created_at, last_login_at |
+| `user_identities` | (provider `LDAP`/`ENTRA`, subject) PK, user_id, created_at. Subject is the LDAP `entryUUID`/`objectGUID` or the Entra `oid` claim. One user can have both, linked explicitly from the profile page while signed in |
 | `refresh_tokens` | id, user_id, token_hash, expires_at, revoked_at, user_agent |
 | `ssh_keys` | id, user_id, name, key_type, fingerprint_sha256 (unique), public_key (OpenSSH text), created_at, last_used_at |
 | `videos` | id, public_id, owner_id, title, description, visibility (`PUBLIC`/`UNLISTED`/`PRIVATE`), status (`UPLOADING`/`UPLOADED`/`PROCESSING`/`READY`/`FAILED`), source (`WEB`/`SFTP`), original_filename, size_bytes, duration_ms, width, height, view_count, like_count, dislike_count, comment_count, created_at, published_at, `search tsvector GENERATED ALWAYS AS (…title A, description B…) STORED` + GIN index |
@@ -141,13 +155,27 @@ Transactions use `new JdbcSession(ds).autocommit(false) … .commit()`. Mappers 
 
 ## 5. Authentication & authorization (`youstream-auth`)
 
-**AD login (`AdAuthenticator`)**
-1. Bind to `ldaps://` as `username@domain` (UPN) with the supplied password (UnboundID `SimpleBindRequest`). Plain `ldap://` is refused unless StartTLS is configured.
-2. On success, search `(&(objectClass=user)(sAMAccountName=…))` under `baseDn` for `objectGUID, sAMAccountName, displayName, mail, memberOf`. Filter values are escaped.
-3. Optionally require membership of `requiredGroup` (checked with the `LDAP_MATCHING_RULE_IN_CHAIN` OID `1.2.840.113556.1.4.1941` for nested groups). `adminGroup` sets `is_admin`.
-4. Upsert into `users` keyed by `objectGUID`. Create a unique `handle` from the username on first login.
+Both login methods produce an `ExternalIdentity(provider, subject, username, displayName, email, admin)`. `UserService.signIn(identity)` looks up `user_identities`, creates the user on first sign-in (unique `username` and `handle` derived from the identity), refreshes display name/email/admin, and issues the YouStream tokens. Everything after that is identical for both methods.
+
+**LDAP login (`LdapAuthenticator`, `POST /api/auth/login`)**
+1. `mode = search`: bind with the service account (`bindDn`), find the user with `userFilter` (value escaped) under `baseDn`, then bind as the found DN with the supplied password. `mode = upn`: bind directly as `username@upnDomain` (Active Directory), then read the user's own entry.
+2. Read the mapped attributes (`id`, `username`, `displayName`, `email`, `memberOf`).
+3. Optionally require membership of `requiredGroup`. `adminGroup` sets admin. For AD, nested groups are checked with the `LDAP_MATCHING_RULE_IN_CHAIN` OID `1.2.840.113556.1.4.1941`.
+4. Production requires `ldaps://` or StartTLS. Plain `ldap://` is allowed only for `localhost` (the dev server).
 
 The SFTP password authenticator uses the same class.
+
+**Microsoft Entra ID (`EntraOidcService`)**
+- Single-tenant app registration, platform **Web** (confidential client with a client secret), redirect URI `/api/auth/microsoft/callback`.
+- `GET /api/auth/microsoft/login` redirects to `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize` with `state`, `nonce` and PKCE, all kept in a short-lived signed cookie.
+- The callback exchanges the code for tokens (Nimbus OAuth 2.0 / OIDC SDK) and validates the ID token signature against the tenant's JWKS, plus issuer, audience, nonce and expiry. It maps `oid` → subject, `preferred_username`/`email`, `name`, and `roles` (contains `YouStream.Admin` → admin).
+- It then sets the refresh cookie and redirects to the SPA, which calls `/api/auth/refresh` to get its access token. Entra access tokens are never passed to the browser.
+- The Entra password is never seen by YouStream, so Entra-only users authenticate to SFTP with SSH keys.
+
+**Dev LDAP server (`youstream-devldap`)**
+- UnboundID `InMemoryDirectoryServer` on port 10389, seeded from `conf/dev-ldap.ldif`: base `dc=youstream,dc=local`, a service account, users `alice` (admin), `bob` and `carol`, and the groups `youstream-users`/`youstream-admins` (with `memberOf` on users). `entryUUID` is generated by the server.
+- Runs standalone with `gradle :youstream-devldap:run`. Auth and SFTP tests start it in-process on a random port.
+- Optional: run [lldap](https://github.com/lldap/lldap) (single native binary, web UI) instead when you want a persistent directory to manage users by hand. The same `search` mode config works.
 
 **Web tokens**
 - `POST /api/auth/login` returns a short-lived access JWT (HS256, 15 min, claims: `sub`, `handle`, `admin`) in the body and sets a refresh token as an `HttpOnly; Secure; SameSite=Strict` cookie. Only a hash of the refresh token is stored, and it rotates on each use.
@@ -216,7 +244,7 @@ FFmpeg isn't installed here yet (`winget install Gyan.FFmpeg`). Its path can be 
 ## 8. SFTP server (`youstream-sftp`)
 
 - `SshServer.setUpDefaultServer()` on port 2222. The `SimpleGeneratorHostKeyProvider` host key is persisted to `data/ssh/host_key` (Ed25519), so clients don't see a new host key after a restart.
-- **Auth**: a `PasswordAuthenticator` calls `AdAuthenticator`, and a `PublickeyAuthenticator` looks up the fingerprint in `ssh_keys`, checks that the key belongs to the login username, and updates `last_used_at`. The resolved `userId` is stored as a session attribute.
+- **Auth**: a `PasswordAuthenticator` calls `LdapAuthenticator` (LDAP users only), and a `PublickeyAuthenticator` looks up the fingerprint in `ssh_keys`, checks that the key belongs to the login username, and updates `last_used_at`. The resolved `userId` is stored as a session attribute.
 - **Lockdown**: only `SftpSubsystemFactory` is registered. There is no shell or exec channel (`setShellFactory(null)`, no `CommandFactory`), all TCP/agent/X11 forwarding is rejected, the auth timeout is short, and failed auths are rate-limited.
 - **Filesystem**: a per-session `VirtualFileSystemFactory` rooted at `data/sftp/{userId}/`, with a single writable `upload/` directory. Users can't see anything outside their inbox.
 - **Ingest trigger**: an `SftpEventListener`.
@@ -234,7 +262,7 @@ Jooby app with `jooby-undertow`, the `jooby-jackson` JSON module, MVC controller
 
 | Area | Endpoints |
 |---|---|
-| Auth | `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/me`, `PATCH /api/me` (handle, bio, avatar) |
+| Auth | `GET /api/auth/methods` (which logins are enabled), `POST /api/auth/login` (LDAP), `GET /api/auth/microsoft/login`, `GET /api/auth/microsoft/callback`, `POST /api/me/identities/microsoft` (link accounts), `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/me`, `PATCH /api/me` (handle, bio, avatar) |
 | SSH keys | `GET/POST /api/me/ssh-keys`, `DELETE /api/me/ssh-keys/{id}` |
 | Upload (resumable) | `POST /api/uploads` → `{id, chunkBytes}`; `PUT /api/uploads/{id}` with `Content-Range` (idempotent chunks, resumable after a disconnect); `GET /api/uploads/{id}` (bytes received); `POST /api/uploads/{id}/complete` with metadata → IngestService |
 | Videos | `GET /api/videos?feed=latest\|trending&cursor=`, `GET /api/videos/{pid}`, `PATCH /api/videos/{pid}`, `DELETE /api/videos/{pid}`, `GET /api/videos/{pid}/status`, `POST /api/videos/{pid}/views`, `GET /api/me/videos` (Studio) |
@@ -275,7 +303,7 @@ src/
 │   ├── Upload.tsx          # drag & drop, chunked resumable upload with progress, metadata form
 │   ├── studio/Videos.tsx   # my videos, processing progress, edit metadata/visibility, delete
 │   ├── settings/SshKeys.tsx# add/remove keys + copy-paste SFTP connection instructions
-│   ├── Login.tsx           # AD username/password
+│   ├── Login.tsx           # "Sign in with Microsoft" button + LDAP username/password form
 │   └── Embed.tsx           # bare player for /embed/:pid
 └── main.tsx, routes.tsx, index.css (Tailwind)
 ```
@@ -301,7 +329,8 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 | Layer | Approach |
 |---|---|
 | Repositories | Testcontainers PostgreSQL (needs Docker), or a dedicated test schema on the remote DB, selected by a Gradle property |
-| AD auth | UnboundID `InMemoryDirectoryServer` seeded with AD-style entries (`sAMAccountName`, `userPrincipalName`, `memberOf`, `objectGUID`) |
+| LDAP auth | `youstream-devldap` started in-process on a random port: good/bad password, unknown user, group gating, admin mapping, filter injection attempts |
+| Entra OIDC | Unit tests with a locally generated RSA key and a stub JWKS/token endpoint (state, nonce, issuer, audience, expiry, role mapping). Manual check against the real tenant |
 | Media | FFmpeg generates a 3 s `testsrc` clip at test time and the test asserts the HLS output. Skipped when FFmpeg is missing |
 | SFTP | Embedded server plus the SSHD `SftpClient`: password and key auth, upload with and without `.part` rename, chroot escape attempts, and rejection of shell/exec channels |
 | API | Jooby `MockRouter`/`JoobyTest` for routes, auth filters, and visibility rules |
@@ -313,11 +342,11 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 
 | Phase | Deliverable | Done when |
 |---|---|---|
-| **0. Bootstrap** | Gradle 9.1.0 wrapper, `settings.gradle`, root `build.gradle` + `dependencies.gradle`, all 8 `youstream-*` skeletons each with `build.gradle` + `dependencies.gradle`, Lombok, `.gitignore`, `conf/`. **I'll ask you for the PostgreSQL and AD connection details here.** | `./gradlew build` is green; the server starts and serves a "hello" SPA page |
-| **1. DB & domain** | Hikari, Flyway V1 schema, Lombok models, jcabi-jdbc repositories with tests | Migrations apply to the remote DB; repository tests pass |
-| **2. Auth** | AD authenticator, user upsert, JWT + refresh, `/api/me`, Login page, AuthProvider | Logging in with an AD account works end to end |
+| **0. Bootstrap** | Gradle 9.1.0 wrapper, `settings.gradle`, root `build.gradle` + `dependencies.gradle`, the `youstream-*` skeletons each with `build.gradle` + `dependencies.gradle`, Lombok, `.gitignore`, `conf/`. **I'll ask you for the PostgreSQL and AD connection details here.** | `./gradlew build` is green; the server starts and serves a "hello" SPA page |
+| **1. DB & domain** ✅ | Hikari, Flyway V1 schema (all tables), Lombok models, `Db` session/transaction helper, repositories for users/identities, refresh tokens, SSH keys, videos/renditions, transcode jobs, upload sessions; `TestDatabase` test fixture. Social repositories (comments, reactions, subscriptions, playlists, views) arrive with their features in Phases 5–6 | Migrations apply to the remote DB; repository tests pass |
+| **2. Auth** | `youstream-devldap`, LDAP authenticator, Entra OIDC, `user_identities` + user upsert, JWT + refresh, `/api/me`, Login page with both options, AuthProvider | Signing in as `alice` (dev LDAP) and with a Microsoft account both work end to end |
 | **3. Core vertical slice** | StorageService, resumable upload API, IngestService, job queue, TranscodeWorker, media serving with playback tokens; Upload, Studio, Home, Watch pages with the HLS player | Upload in the browser → progress → watch with adaptive quality |
-| **4. SFTP** | SSHD server, AD password + SSH key auth, virtual inbox, event-driven ingest, sidecar metadata, status files; SSH Keys settings page | `sftp -P 2222 user@host` → `put clip.mp4` → video appears in Studio and plays |
+| **4. SFTP** | SSHD server, LDAP password + SSH key auth, virtual inbox, event-driven ingest, sidecar metadata, status files; SSH Keys settings page | `sftp -P 2222 user@host` → `put clip.mp4` → video appears in Studio and plays |
 | **5. Social** | Comments (with replies), likes/dislikes, channel pages, subscriptions, subscription feed, view counting | All features usable in the UI and covered by API tests |
 | **6. Discovery & sharing** | Full-text search, playlists, visibility enforcement, share dialog, `/embed/:pid`, oEmbed | Unlisted links work, private videos return 404 to others, the embed iframe plays |
 | **7. Hardening & packaging** | Rate limits, quotas, security headers, error pages, cleanup jobs (expired upload sessions, orphaned files), `installDist` distribution, optional Dockerfile, README with run instructions | Fresh clone → configure `local.conf` → `./gradlew :youstream-server:run` works |
@@ -326,9 +355,9 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 
 1. **Flyway** for migrations.
 2. **com.auth0:java-jwt** for JWTs.
-3. **UnboundID LDAP SDK** for AD: easier than JNDI, and the same library gives tests an in-memory server.
+3. **UnboundID LDAP SDK** for LDAP login and the dev LDAP server; **Nimbus OAuth 2.0 / OIDC SDK** for Entra ID.
 4. One deployable process (`youstream-server`) runs the web app, SFTP and workers. Workers can be split out later because the job queue is DB-based.
 5. Ports: HTTP 8080, SFTP 2222. Default max upload size: 10 GB. SFTP uploads default to **PRIVATE**.
 6. Base Java package: `com.youstream.*`.
-7. Docker is **not** installed, so repository tests run against a separate test schema on the remote DB.
+7. Docker is **not** installed, so repository tests run against the `youstream_test` schema of the remote `youstream` database (Flyway cleans and migrates it once per test run). The app uses schema `public` of the same database, as role `youstream`.
 8. Not in v1: tags/categories, notifications, live streaming, recommendations beyond "latest/trending/same channel", and moderation beyond admins deleting videos and comments.
