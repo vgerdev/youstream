@@ -3,6 +3,9 @@ package com.youstream.server;
 import com.typesafe.config.Config;
 import com.youstream.api.AppServices;
 import com.youstream.api.YouStreamApp;
+import com.youstream.api.auth.SshKeyRoutes;
+import com.youstream.auth.LoginThrottle;
+import com.youstream.auth.SshKeyService;
 import com.youstream.auth.UserService;
 import com.youstream.auth.entra.EntraConfig;
 import com.youstream.auth.entra.EntraOidcService;
@@ -19,6 +22,8 @@ import com.youstream.media.IngestService;
 import com.youstream.media.MediaConfig;
 import com.youstream.media.ProcessRunner;
 import com.youstream.media.TranscodeWorkerPool;
+import com.youstream.sftp.SftpConfig;
+import com.youstream.sftp.YouStreamSftpServer;
 import io.jooby.Environment;
 import io.jooby.EnvironmentOptions;
 import io.jooby.ExecutionMode;
@@ -34,7 +39,7 @@ import java.util.Locale;
 
 /**
  * Entry point: loads conf/application.conf (+ local.conf), migrates the database, then starts the HTTP server and
- * the transcode workers. Phase 4 adds the SFTP server.
+ * the transcode workers and the SFTP upload server.
  */
 public final class YouStreamServer {
 
@@ -57,15 +62,36 @@ public final class YouStreamServer {
         ProcessRunner runner = new ProcessRunner();
         TranscodeWorkerPool workers = new TranscodeWorkerPool(database.db(), storage, media, runner, clock);
 
+        IngestService ingest = new IngestService(database.db(), storage, new Ffprobe(media.getFfprobe(), runner));
+        LdapAuthenticator ldap = ldap(conf);
+        UserService users = new UserService(database.db(), clock);
+        SshKeyService sshKeys = new SshKeyService(database.db(), clock);
+        // one throttle for web and SFTP password logins
+        LoginThrottle throttle = new LoginThrottle();
+
+        YouStreamSftpServer sftp = null;
+        SshKeyRoutes.SftpEndpoint sftpEndpoint = SshKeyRoutes.SftpEndpoint.disabled();
+        if (conf.getBoolean("sftp.enabled")) {
+            SftpConfig sftpConfig = sftpConfig(conf);
+            sftp = new YouStreamSftpServer(sftpConfig, storage, ingest, users, sshKeys, ldap, throttle);
+            sftp.start();
+            sftpEndpoint = new SshKeyRoutes.SftpEndpoint(true, conf.getString("sftp.publicHost"), sftp.port(),
+                sftp.hostKeyFingerprint(), sftpConfig.getMaxFileBytes());
+        }
+        YouStreamSftpServer sftpServer = sftp;
+
         String secret = conf.getString("jwt.secret");
         AppServices services = AppServices.builder()
             .databaseHealthy(database.db()::isHealthy)
             .db(database.db())
             .storage(storage)
-            .ingest(new IngestService(database.db(), storage, new Ffprobe(media.getFfprobe(), runner)))
-            .ldap(ldap(conf))
+            .ingest(ingest)
+            .ldap(ldap)
             .entra(entra(conf))
-            .users(new UserService(database.db(), clock))
+            .users(users)
+            .sshKeys(sshKeys)
+            .sftp(sftpEndpoint)
+            .loginThrottle(throttle)
             .tokens(new TokenService(secret, conf.getDuration("jwt.accessTtl"), clock))
             .refreshTokens(new RefreshTokenService(database.db(), conf.getDuration("jwt.refreshTtl"), clock))
             .playbackTokens(new PlaybackTokens(secret, conf.getDuration("media.playbackTokenTtl"), clock))
@@ -81,12 +107,26 @@ public final class YouStreamServer {
             app.setEnvironment(env);
             app.onStarted(workers::start);
             app.onStop(() -> {
+                if (sftpServer != null) {
+                    sftpServer.close();
+                }
                 // workers release their running jobs, which needs the database
                 workers.close();
                 database.close();
             });
             return app;
         });
+    }
+
+    static SftpConfig sftpConfig(Config conf) {
+        Config c = conf.getConfig("sftp");
+        return SftpConfig.builder()
+            .port(c.getInt("port"))
+            .hostKey(Path.of(c.getString("hostKey")))
+            .maxFileBytes(c.getBytes("maxFileBytes"))
+            .idleTimeout(c.getDuration("idleTimeout"))
+            .publicUrl(conf.getString("app.publicUrl").replaceAll("/+$", ""))
+            .build();
     }
 
     static MediaConfig mediaConfig(Config conf) {

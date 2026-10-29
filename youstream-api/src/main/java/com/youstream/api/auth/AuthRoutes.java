@@ -85,7 +85,9 @@ public final class AuthRoutes {
 
     private ExternalIdentity authenticateLdap(Context ctx, LoginRequest req) {
         String ip = ctx.getRemoteAddress();
-        s.getLoginThrottle().check(ip, req.getUsername());
+        if (s.getLoginThrottle().isBlocked(ip, req.getUsername())) {
+            throw new StatusCodeException(StatusCode.TOO_MANY_REQUESTS, "too many failed sign-in attempts; try again later");
+        }
         try {
             ExternalIdentity identity = s.getLdap().authenticate(req.getUsername(), req.getPassword());
             s.getLoginThrottle().success(ip, req.getUsername());

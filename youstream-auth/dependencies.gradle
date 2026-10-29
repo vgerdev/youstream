@@ -5,6 +5,8 @@ dependencies {
     implementation libs.javaJwt
     implementation libs.nimbusOidc
     implementation libs.sshdCore
+    runtimeOnly libs.bcprov
+    runtimeOnly libs.bcpkix
 
     testImplementation project(':youstream-devldap')
     testImplementation testFixtures(project(':youstream-db'))

@@ -1,6 +1,8 @@
 package com.youstream.api;
 
-import com.youstream.api.auth.LoginThrottle;
+import com.youstream.api.auth.SshKeyRoutes;
+import com.youstream.auth.LoginThrottle;
+import com.youstream.auth.SshKeyService;
 import com.youstream.auth.UserService;
 import com.youstream.auth.entra.EntraOidcService;
 import com.youstream.auth.ldap.LdapAuthenticator;
@@ -32,6 +34,9 @@ public class AppServices {
     EntraOidcService entra;
 
     UserService users;
+    SshKeyService sshKeys;
+    @Builder.Default
+    SshKeyRoutes.SftpEndpoint sftp = SshKeyRoutes.SftpEndpoint.disabled();
     TokenService tokens;
     RefreshTokenService refreshTokens;
     PlaybackTokens playbackTokens;

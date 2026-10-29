@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { authErrorMessage } from '../auth/errors';
 import LdapLoginForm from '../components/LdapLoginForm';
 import MicrosoftButton from '../components/MicrosoftButton';
+import SftpSection from '../components/SftpSection';
 
 const PROVIDER_NAMES: Record<IdentityProvider, string> = {
   LDAP: 'Directory account (LDAP)',
@@ -84,6 +85,8 @@ export default function Account() {
               </div>
             </Show>
           </section>
+
+          <SftpSection />
         </section>
       )}
     </Show>

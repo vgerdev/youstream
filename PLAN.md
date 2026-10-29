@@ -248,7 +248,9 @@ FFmpeg isn't installed here yet (`winget install Gyan.FFmpeg`). Its path can be 
 - `SshServer.setUpDefaultServer()` on port 2222. The `SimpleGeneratorHostKeyProvider` host key is persisted to `data/ssh/host_key` (Ed25519), so clients don't see a new host key after a restart.
 - **Auth**: a `PasswordAuthenticator` calls `LdapAuthenticator` (LDAP users only), and a `PublickeyAuthenticator` looks up the fingerprint in `ssh_keys`, checks that the key belongs to the login username, and updates `last_used_at`. The resolved `userId` is stored as a session attribute.
 - **Lockdown**: only `SftpSubsystemFactory` is registered. There is no shell or exec channel (`setShellFactory(null)`, no `CommandFactory`), all TCP/agent/X11 forwarding is rejected, the auth timeout is short, and failed auths are rate-limited.
-- **Filesystem**: a per-session `VirtualFileSystemFactory` rooted at `data/sftp/{userId}/`, with a single writable `upload/` directory. Users can't see anything outside their inbox.
+- **Filesystem**: a per-session `VirtualFileSystemFactory` rooted at `data/sftp/{userId}/`; the whole root is the user's inbox (subfolders allowed). Links cannot be created, and listings show owner/group `youstream` instead of the server's OS account.
+- **Ed25519 keys** need BouncyCastle on the classpath (`bcprov`/`bcpkix`); SSHD alone only handles RSA/ECDSA.
+- **OpenSSH compatibility**: max read/write data per SFTP packet is 255 KiB, because OpenSSH's `sftp` caps a whole message at 256 KiB.
 - **Ingest trigger**: an `SftpEventListener`.
   - On `closed(...)` for a handle that was opened for writing, it schedules ingest.
   - On `moved(...)` it handles clients that upload to `*.part`/`*.tmp` and rename at the end.
@@ -256,7 +258,7 @@ FFmpeg isn't installed here yet (`winget install Gyan.FFmpeg`). Its path can be 
   - A file whose size is still changing within a short debounce window is re-checked before ingest.
 - **Metadata**: an optional sidecar `name.json` (`{"title","description","visibility","playlist"}`) next to `name.mp4`. Otherwise the title is taken from the filename and visibility defaults to **PRIVATE**, so the user reviews the video in Studio before publishing.
 - **Limits**: `maxFileBytes` and a per-user quota are enforced with a write-size check in a custom `SftpFileSystemAccessor`.
-- After ingest, the file is moved out of the inbox, and a `name.mp4.status` text file (READY / FAILED: reason) is written back so scripted uploaders can poll for the result.
+- After ingest, the file is moved out of the inbox, and a `name.mp4.status` text file is written back: `ACCEPTED <id>` with the watch URL, or `REJECTED <reason>` (not a video, over the size limit). Processing progress is shown in Studio.
 
 ## 9. HTTP API (`youstream-api`)
 
@@ -348,7 +350,7 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 | **1. DB & domain** ✅ | Hikari, Flyway V1 schema (all tables), Lombok models, `Db` session/transaction helper, repositories for users/identities, refresh tokens, SSH keys, videos/renditions, transcode jobs, upload sessions; `TestDatabase` test fixture. Social repositories (comments, reactions, subscriptions, playlists, views) arrive with their features in Phases 5–6 | Migrations apply to the remote DB; repository tests pass |
 | **2. Auth** ✅ | `youstream-devldap`, LDAP authenticator, Entra OIDC, `user_identities` + user upsert, JWT + refresh rotation with reuse detection, login throttling, `/api/me`, account linking, Login and Account pages, AuthProvider | Signing in as `alice` (dev LDAP) and with a Microsoft account both work end to end |
 | **3. Core vertical slice** ✅ | StorageService, resumable upload API, IngestService, job queue, TranscodeWorker, media serving with playback tokens; Upload, Studio, Home, Watch pages with the HLS player | Upload in the browser → progress → watch with adaptive quality |
-| **4. SFTP** | SSHD server, LDAP password + SSH key auth, virtual inbox, event-driven ingest, sidecar metadata, status files; SSH Keys settings page | `sftp -P 2222 user@host` → `put clip.mp4` → video appears in Studio and plays |
+| **4. SFTP** ✅ | SSHD server, LDAP password + SSH key auth, virtual inbox, event-driven ingest, sidecar metadata, status files; SSH Keys settings page | `sftp -P 2222 user@host` → `put clip.mp4` → video appears in Studio and plays |
 | **5. Social** | Comments (with replies), likes/dislikes, channel pages, subscriptions, subscription feed, view counting | All features usable in the UI and covered by API tests |
 | **6. Discovery & sharing** | Full-text search, playlists, visibility enforcement, share dialog, `/embed/:pid`, oEmbed | Unlisted links work, private videos return 404 to others, the embed iframe plays |
 | **7. Hardening & packaging** | Rate limits, quotas, security headers, error pages, cleanup jobs (expired upload sessions, orphaned files), `installDist` distribution, optional Dockerfile, README with run instructions | Fresh clone → configure `local.conf` → `./gradlew :youstream-server:run` works |

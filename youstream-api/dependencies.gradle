@@ -10,6 +10,7 @@ dependencies {
     testImplementation libs.joobyTest
     testImplementation libs.joobyUndertow
     testImplementation project(':youstream-devldap')
+    testImplementation libs.sshdCore
     testImplementation testFixtures(project(':youstream-db'))
     testImplementation testFixtures(project(':youstream-media'))
     testRuntimeOnly libs.logback

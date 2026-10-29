@@ -1,7 +1,4 @@
-package com.youstream.api.auth;
-
-import io.jooby.StatusCode;
-import io.jooby.exception.StatusCodeException;
+package com.youstream.auth;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -13,8 +10,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * In-memory brute-force protection for password logins: limits failures per (IP, username) and per IP
- * within a sliding window. Per-JVM only, which is enough for a single server.
+ * In-memory brute-force protection for password logins (web and SFTP): limits failures per (IP, username) and
+ * per IP within a sliding window. Per-JVM only, which is enough for a single server.
  */
 public class LoginThrottle {
 
@@ -35,11 +32,9 @@ public class LoginThrottle {
         this.clock = clock;
     }
 
-    /** @throws StatusCodeException 429 when the caller must wait */
-    public void check(String ip, String username) {
-        if (count(userKey(ip, username)) >= maxPerUser || count(ipKey(ip)) >= maxPerIp) {
-            throw new StatusCodeException(StatusCode.TOO_MANY_REQUESTS, "too many failed sign-in attempts; try again later");
-        }
+    /** True when the caller must wait before trying again. */
+    public boolean isBlocked(String ip, String username) {
+        return count(userKey(ip, username)) >= maxPerUser || count(ipKey(ip)) >= maxPerIp;
     }
 
     public void failure(String ip, String username) {

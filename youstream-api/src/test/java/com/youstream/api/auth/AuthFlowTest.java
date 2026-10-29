@@ -2,7 +2,10 @@ package com.youstream.api.auth;
 
 import com.youstream.api.AppServices;
 import com.youstream.api.YouStreamApp;
+import com.youstream.auth.SshKeyService;
 import com.youstream.auth.UserService;
+import org.apache.sshd.common.config.keys.KeyUtils;
+import org.apache.sshd.common.config.keys.PublicKeyEntry;
 import com.youstream.auth.entra.EntraConfig;
 import com.youstream.auth.entra.EntraOidcService;
 import com.youstream.auth.ldap.LdapAuthenticator;
@@ -62,6 +65,8 @@ class AuthFlowTest {
                 .redirectUri("http://localhost/api/auth/microsoft/callback")
                 .build()))
             .users(new UserService(TestDatabase.db(), clock))
+            .sshKeys(new SshKeyService(TestDatabase.db(), clock))
+            .sftp(new SshKeyRoutes.SftpEndpoint(true, "sftp.test", 2222, "SHA256:host", 10L << 30))
             .tokens(new TokenService("integration-test-secret-0123456789", Duration.ofMinutes(15), clock))
             .refreshTokens(new RefreshTokenService(TestDatabase.db(), Duration.ofDays(30), clock))
             .secureCookies(false) // java.net.CookieManager only returns Secure cookies over https
@@ -127,6 +132,35 @@ class AuthFlowTest {
 
         assertThat(post("/api/auth/logout", "", null).statusCode()).isEqualTo(204);
         assertThat(post("/api/auth/refresh", "", null).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void manageSshKeysAndShowSftpInfo() throws Exception {
+        String access = json(post("/api/auth/login", "{\"username\":\"alice\",\"password\":\"alice-pass\"}", null))
+            .get("accessToken").asString();
+        String key = PublicKeyEntry.toString(KeyUtils.generateKeyPair("ssh-ed25519", 256).getPublic()) + " alice@laptop";
+
+        HttpResponse<String> added = post("/api/me/ssh-keys", JSON.writeValueAsString(java.util.Map.of("publicKey", key)), access);
+        assertThat(added.statusCode()).isEqualTo(201);
+        JsonNode created = json(added);
+        assertThat(created.get("name").asString()).isEqualTo("alice@laptop");
+        assertThat(created.get("fingerprint").asString()).startsWith("SHA256:");
+
+        HttpResponse<String> duplicate = post("/api/me/ssh-keys", JSON.writeValueAsString(java.util.Map.of("publicKey", key)), access);
+        assertThat(duplicate.statusCode()).isEqualTo(400);
+        assertThat(json(duplicate).get("error").asString()).isEqualTo("invalid_key");
+
+        assertThat(json(get("/api/me/ssh-keys", access))).hasSize(1);
+        JsonNode sftp = json(get("/api/me/sftp", access));
+        assertThat(sftp.get("host").asString()).isEqualTo("sftp.test");
+        assertThat(sftp.get("username").asString()).isEqualTo("alice");
+        assertThat(sftp.get("passwordLogin").asBoolean()).isTrue();
+
+        HttpRequest delete = HttpRequest.newBuilder(URI.create(base + "/api/me/ssh-keys/" + created.get("id").asLong()))
+            .header("Authorization", "Bearer " + access).DELETE().build();
+        assertThat(http.send(delete, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(204);
+        assertThat(json(get("/api/me/ssh-keys", access))).isEmpty();
+        assertThat(get("/api/me/ssh-keys", null).statusCode()).isEqualTo(401);
     }
 
     @Test

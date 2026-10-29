@@ -2,6 +2,8 @@ package com.youstream.api;
 
 import com.youstream.api.auth.AuthFilter;
 import com.youstream.api.auth.AuthRoutes;
+import com.youstream.api.auth.SshKeyRoutes;
+import com.youstream.auth.SshKeyService;
 import com.youstream.api.video.MediaRoutes;
 import com.youstream.api.video.PublicVideoCache;
 import com.youstream.api.video.UploadRoutes;
@@ -35,6 +37,9 @@ public class YouStreamApp extends Jooby {
         if (services.getTokens() != null) {
             before(new AuthFilter(services.getTokens()));
             new AuthRoutes(services).install(this);
+        }
+        if (services.getSshKeys() != null) {
+            new SshKeyRoutes(services).install(this);
         }
         if (services.getDb() != null) {
             PublicVideoCache publicVideos = new PublicVideoCache(new VideoRepository(services.getDb()));
@@ -87,6 +92,9 @@ public class YouStreamApp extends Jooby {
         } else if (cause instanceof InvalidMediaException) {
             status = StatusCode.UNPROCESSABLE_ENTITY;
             error = "invalid_media";
+        } else if (cause instanceof SshKeyService.InvalidKeyException) {
+            status = StatusCode.BAD_REQUEST;
+            error = "invalid_key";
         } else {
             error = errorName(status);
             if (status.value() >= 500) {
