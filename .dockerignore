@@ -1,0 +1,8 @@
+.git
+.gradle
+**/build
+**/node_modules
+youstream-web/dist
+data
+conf/local.conf
+*.log

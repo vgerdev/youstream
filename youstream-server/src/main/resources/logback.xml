@@ -1,11 +1,17 @@
 <configuration>
   <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
-      <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n</pattern>
     </encoder>
   </appender>
 
-  <logger name="com.youstream" level="DEBUG"/>
+  <!-- LOG_LEVEL=DEBUG shows FFmpeg command lines, SQL pool details, etc. -->
+  <logger name="com.youstream" level="${LOG_LEVEL:-INFO}"/>
+  <!-- one line per HTTP request; set ACCESS_LOG=OFF to silence -->
+  <logger name="io.jooby.handler.AccessLogHandler" level="${ACCESS_LOG:-INFO}"/>
+  <logger name="org.apache.sshd" level="WARN"/>
+  <logger name="org.flywaydb" level="WARN"/>
+  <logger name="com.zaxxer.hikari" level="WARN"/>
 
   <root level="INFO">
     <appender-ref ref="STDOUT"/>

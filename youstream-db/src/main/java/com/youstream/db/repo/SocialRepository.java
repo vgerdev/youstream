@@ -118,6 +118,14 @@ public class SocialRepository {
 
     // ------------------------------------------------------------------ views
 
+    /** View rows only deduplicate within a day; older ones are no longer needed. */
+    public int deleteViewsBefore(java.time.LocalDate day) {
+        return db.run(s -> s
+            .sql("DELETE FROM video_views WHERE viewed_on < ?")
+            .set(java.sql.Date.valueOf(day))
+            .update(Outcome.UPDATE_COUNT));
+    }
+
     /**
      * Counts a view at most once per viewer per video per day.
      *

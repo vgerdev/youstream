@@ -85,3 +85,5 @@ export async function putChunk(id: string, chunk: Blob, start: number, total: nu
   });
   return (await res.json()) as UploadStatus;
 }
+
+export const getStorageUsage = () => api<{ usedBytes: number; quotaBytes: number }>('/me/storage');

@@ -110,6 +110,14 @@ public class VideoRepository {
             .select(new ListOutcome<>(VideoRepository::map)));
     }
 
+    /** Bytes of originals a user has uploaded (counted against the storage quota). */
+    public long totalBytesByOwner(long ownerId) {
+        return db.run(s -> s
+            .sql("SELECT COALESCE(SUM(size_bytes), 0) FROM videos WHERE owner_id = ?")
+            .set(ownerId)
+            .select(new ListOutcome<>(rs -> rs.getLong(1))).getFirst());
+    }
+
     public long countPublicByOwner(long ownerId) {
         return db.run(s -> s
             .sql("SELECT count(*) FROM videos WHERE owner_id = ? AND visibility = 'PUBLIC' AND status = 'READY'")

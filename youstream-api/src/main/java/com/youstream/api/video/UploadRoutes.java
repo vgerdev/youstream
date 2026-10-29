@@ -14,6 +14,7 @@ import com.youstream.db.repo.TranscodeJobRepository;
 import com.youstream.db.repo.UploadSessionRepository;
 import com.youstream.db.repo.UserRepository;
 import com.youstream.media.IngestRequest;
+import com.youstream.media.QuotaExceededException;
 import io.jooby.Context;
 import io.jooby.Jooby;
 import io.jooby.StatusCode;
@@ -56,6 +57,14 @@ public final class UploadRoutes {
         app.put("/api/uploads/{id}", this::chunk);
         app.post("/api/uploads/{id}/complete", this::complete);
         app.delete("/api/uploads/{id}", this::abort);
+        app.get("/api/me/storage", this::storage);
+    }
+
+    /** Storage used by the caller's originals and unfinished uploads, and the quota (0 = unlimited). */
+    private Map<String, Long> storage(Context ctx) {
+        AccessClaims caller = CurrentUser.require(ctx);
+        long used = s.getIngest().usedBytes(caller.getUserId()) + uploads.pendingBytes(caller.getUserId(), Instant.now());
+        return Map.of("usedBytes", used, "quotaBytes", s.getIngest().quotaBytes());
     }
 
     private UploadDtos.Status create(Context ctx) {
@@ -67,6 +76,13 @@ public final class UploadRoutes {
         if (req.getSize() > s.getMaxUploadBytes()) {
             throw new StatusCodeException(StatusCode.REQUEST_ENTITY_TOO_LARGE,
                 "file is larger than the " + (s.getMaxUploadBytes() >> 20) + " MB limit");
+        }
+        long quota = s.getIngest().quotaBytes();
+        if (quota > 0) {
+            long used = s.getIngest().usedBytes(caller.getUserId()) + uploads.pendingBytes(caller.getUserId(), Instant.now());
+            if (used + req.getSize() > quota) {
+                throw new QuotaExceededException(used, quota);
+            }
         }
         UploadSession upload = uploads.insert(UploadSession.builder()
             .id(UUID.randomUUID())

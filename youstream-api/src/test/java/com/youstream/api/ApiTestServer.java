@@ -34,6 +34,7 @@ public final class ApiTestServer implements AutoCloseable {
 
     private final DevLdapServer ldap;
     private final Server server;
+    private final RateLimits rateLimits = new RateLimits(RateLimits.DEFAULT_RULES, java.time.Clock.systemUTC());
     private final String base;
     private final HttpClient http = HttpClient.newHttpClient();
 
@@ -55,6 +56,7 @@ public final class ApiTestServer implements AutoCloseable {
             .refreshTokens(new RefreshTokenService(TestDatabase.db(), Duration.ofDays(30), clock))
             .playbackTokens(new PlaybackTokens(secret, Duration.ofHours(6), clock))
             .secureCookies(false)
+            .rateLimits(rateLimits)
             .build();
         int port;
         try (ServerSocket socket = new ServerSocket(0)) {
@@ -63,6 +65,11 @@ public final class ApiTestServer implements AutoCloseable {
         server = new UndertowServer().setOptions(new ServerOptions().setPort(port));
         server.start(new YouStreamApp(services));
         base = "http://localhost:" + port;
+    }
+
+    /** Call between tests: user ids restart after a database reset, so old counts would carry over. */
+    public void resetRateLimits() {
+        rateLimits.reset();
     }
 
     /** Signs in with a dev LDAP account and returns the access token. */

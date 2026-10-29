@@ -43,6 +43,8 @@ public class AppServices {
 
     @Builder.Default
     LoginThrottle loginThrottle = new LoginThrottle();
+    @Builder.Default
+    RateLimits rateLimits = new RateLimits(RateLimits.DEFAULT_RULES, java.time.Clock.systemUTC());
     /** Mark auth cookies Secure (browsers accept Secure cookies on http://localhost). */
     @Builder.Default
     boolean secureCookies = true;

@@ -38,15 +38,24 @@ public final class EmbedRoutes {
         this.users = services.getDb() == null ? null : new UserRepository(services.getDb());
     }
 
+    /**
+     * Content-Security-Policy for everything served: only this origin's scripts, media and API, no plugins.
+     * Inline styles stay allowed because Solid sets style attributes (progress bars). hls.js plays through
+     * {@code blob:} MediaSource URLs.
+     */
+    static final String CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';"
+        + " img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; worker-src 'self' blob:;"
+        + " font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
+
     /** Security headers; must be installed before the routes they apply to. */
     public static void installHeaders(Jooby app) {
         app.use(next -> ctx -> {
             ctx.setResponseHeader("X-Content-Type-Options", "nosniff");
             ctx.setResponseHeader("Referrer-Policy", "strict-origin-when-cross-origin");
             if (ctx.getRequestPath().startsWith("/embed/")) {
-                ctx.setResponseHeader("Content-Security-Policy", "frame-ancestors *");
+                ctx.setResponseHeader("Content-Security-Policy", CSP + "; frame-ancestors *");
             } else {
-                ctx.setResponseHeader("Content-Security-Policy", "frame-ancestors 'none'");
+                ctx.setResponseHeader("Content-Security-Policy", CSP + "; frame-ancestors 'none'");
                 ctx.setResponseHeader("X-Frame-Options", "DENY");
             }
             return next.apply(ctx);

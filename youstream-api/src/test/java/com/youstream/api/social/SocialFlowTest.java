@@ -49,6 +49,7 @@ class SocialFlowTest {
     @BeforeEach
     void setUp() throws Exception {
         TestDatabase.truncate();
+        api.resetRateLimits();
         alice = api.login("alice", "alice-pass");
         bob = api.login("bob", "bob-pass");
         pid = readyVideo("alice", "Alice's trip", Visibility.PUBLIC);
@@ -99,6 +100,20 @@ class SocialFlowTest {
         assertThat(after.at("/items/0/body").isNull()).isTrue();
         assertThat(api.send("POST", "/api/videos/" + pid + "/comments", "{\"body\":\" \"}", bob).statusCode()).isEqualTo(400);
         assertThat(api.send("POST", "/api/videos/" + pid + "/comments", "{\"body\":\"x\"}", null).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void commentBurstsAreRateLimited() throws Exception {
+        for (int i = 0; i < 10; i++) {
+            assertThat(api.send("POST", "/api/videos/" + pid + "/comments", "{\"body\":\"spam " + i + "\"}", bob).statusCode())
+                .isEqualTo(201);
+        }
+        var limited = api.send("POST", "/api/videos/" + pid + "/comments", "{\"body\":\"one more\"}", bob);
+        assertThat(limited.statusCode()).isEqualTo(429);
+        assertThat(json(limited, 429).get("error").asString()).isEqualTo("rate_limited");
+        assertThat(limited.headers().firstValue("Retry-After")).hasValueSatisfying(v -> assertThat(Integer.parseInt(v)).isBetween(1, 60));
+        // limits are per caller
+        assertThat(api.send("POST", "/api/videos/" + pid + "/comments", "{\"body\":\"hi\"}", alice).statusCode()).isEqualTo(201);
     }
 
     @Test

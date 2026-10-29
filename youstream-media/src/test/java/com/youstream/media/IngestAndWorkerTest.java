@@ -88,6 +88,19 @@ class IngestAndWorkerTest {
     }
 
     @Test
+    void enforcesStorageQuota() throws Exception {
+        IngestService limited = new IngestService(db, storage, new Ffprobe(MediaTestSupport.FFPROBE, new ProcessRunner()), 100);
+        Files.createDirectories(storage.localPath("incoming"));
+        Files.write(storage.localPath("incoming/big"), new byte[101]);
+
+        assertThatThrownBy(() -> limited.ingest(IngestRequest.builder()
+            .ownerId(ownerId).sourceKey("incoming/big").originalFilename("big.mp4").source(VideoSource.WEB).build()))
+            .isInstanceOf(QuotaExceededException.class).hasMessageContaining("quota");
+        assertThat(storage.exists("incoming/big")).isFalse();
+        assertThat(limited.usedBytes(ownerId)).isZero();
+    }
+
+    @Test
     void rejectsNonVideoUploadAndDeletesIt() throws Exception {
         MediaTestSupport.assumeFfmpeg();
         Files.createDirectories(storage.localPath("incoming"));

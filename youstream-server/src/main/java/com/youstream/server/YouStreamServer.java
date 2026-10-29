@@ -19,6 +19,7 @@ import com.youstream.db.Database;
 import com.youstream.db.DbConfig;
 import com.youstream.media.Ffprobe;
 import com.youstream.media.IngestService;
+import com.youstream.media.MaintenanceJobs;
 import com.youstream.media.MediaConfig;
 import com.youstream.media.ProcessRunner;
 import com.youstream.media.TranscodeWorkerPool;
@@ -62,7 +63,9 @@ public final class YouStreamServer {
         ProcessRunner runner = new ProcessRunner();
         TranscodeWorkerPool workers = new TranscodeWorkerPool(database.db(), storage, media, runner, clock);
 
-        IngestService ingest = new IngestService(database.db(), storage, new Ffprobe(media.getFfprobe(), runner));
+        IngestService ingest = new IngestService(database.db(), storage, new Ffprobe(media.getFfprobe(), runner),
+            conf.getBytes("upload.quotaBytes"));
+        MaintenanceJobs maintenance = new MaintenanceJobs(database.db(), storage, clock);
         LdapAuthenticator ldap = ldap(conf);
         UserService users = new UserService(database.db(), clock);
         SshKeyService sshKeys = new SshKeyService(database.db(), clock);
@@ -107,7 +110,9 @@ public final class YouStreamServer {
             YouStreamApp app = new YouStreamApp(services);
             app.setEnvironment(env);
             app.onStarted(workers::start);
+            app.onStarted(() -> maintenance.start(conf.getDuration("maintenance.every")));
             app.onStop(() -> {
+                maintenance.close();
                 if (sftpServer != null) {
                     sftpServer.close();
                 }

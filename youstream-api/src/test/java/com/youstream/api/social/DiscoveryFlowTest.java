@@ -51,6 +51,7 @@ class DiscoveryFlowTest {
     @BeforeEach
     void setUp() throws Exception {
         TestDatabase.truncate();
+        api.resetRateLimits();
         alice = api.login("alice", "alice-pass");
         bob = api.login("bob", "bob-pass");
     }
@@ -141,12 +142,14 @@ class DiscoveryFlowTest {
     @Test
     void onlyEmbedPagesMayBeFramed() throws Exception {
         HttpResponse<String> watch = api.send("GET", "/watch/abcdefghijk", null, null);
-        assertThat(watch.headers().firstValue("Content-Security-Policy")).contains("frame-ancestors 'none'");
+        assertThat(watch.headers().firstValue("Content-Security-Policy")).hasValueSatisfying(csp ->
+            assertThat(csp).contains("frame-ancestors 'none'", "script-src 'self'", "object-src 'none'", "media-src 'self' blob:"));
         assertThat(watch.headers().firstValue("X-Frame-Options")).contains("DENY");
         assertThat(watch.headers().firstValue("X-Content-Type-Options")).contains("nosniff");
 
         HttpResponse<String> embed = api.send("GET", "/embed/abcdefghijk", null, null);
-        assertThat(embed.headers().firstValue("Content-Security-Policy")).contains("frame-ancestors *");
+        assertThat(embed.headers().firstValue("Content-Security-Policy")).hasValueSatisfying(csp ->
+            assertThat(csp).endsWith("frame-ancestors *").contains("script-src 'self'"));
         assertThat(embed.headers().firstValue("X-Frame-Options")).isEmpty();
 
         assertThat(api.send("GET", "/api/health", null, null).headers().firstValue("X-Frame-Options")).contains("DENY");

@@ -1,7 +1,7 @@
 import { createSignal, For, Match, Show, Switch } from 'solid-js';
 import { A } from '@solidjs/router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/solid-query';
-import { deleteVideo, listMyVideos, updateVideo, type Video, type VideoUpdate } from '../api/videos';
+import { deleteVideo, getStorageUsage, listMyVideos, updateVideo, type Video, type VideoUpdate } from '../api/videos';
 import VisibilitySelect from '../components/VisibilitySelect';
 import { formatBytes, formatDuration, timeAgo } from '../util/format';
 
@@ -15,7 +15,11 @@ export default function Studio() {
     // poll while anything is still being processed
     refetchInterval: (query) => (query.state.data?.items.some(busy) ? 3000 : false),
   }));
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['my-videos'] });
+  const usage = useQuery(() => ({ queryKey: ['storage-usage'], queryFn: getStorageUsage }));
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['storage-usage'] });
+    return queryClient.invalidateQueries({ queryKey: ['my-videos'] });
+  };
 
   const update = useMutation(() => ({
     mutationFn: (args: { id: string; update: VideoUpdate }) => updateVideo(args.id, args.update),
@@ -26,7 +30,16 @@ export default function Studio() {
   return (
     <section class="mx-auto mt-6 max-w-5xl space-y-6">
       <header class="flex items-center justify-between">
-        <h1 class="text-2xl font-bold">Your videos</h1>
+        <div>
+          <h1 class="text-2xl font-bold">Your videos</h1>
+          <Show when={usage.data}>
+            {(u) => (
+              <p class="text-sm text-neutral-500">
+                {formatBytes(u().usedBytes)} used{u().quotaBytes > 0 ? ` of ${formatBytes(u().quotaBytes)}` : ''}
+              </p>
+            )}
+          </Show>
+        </div>
         <A href="/upload" class="rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700">
           Upload
         </A>

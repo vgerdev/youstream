@@ -29,20 +29,44 @@ public class IngestService {
     private final Ffprobe ffprobe;
     private final VideoRepository videos;
     private final TranscodeJobRepository jobs;
+    private final long quotaBytes;
 
     public IngestService(Db db, StorageService storage, Ffprobe ffprobe) {
+        this(db, storage, ffprobe, 0);
+    }
+
+    /** @param quotaBytes per-user limit on the total size of uploaded originals; 0 = unlimited */
+    public IngestService(Db db, StorageService storage, Ffprobe ffprobe, long quotaBytes) {
         this.db = db;
         this.storage = storage;
         this.ffprobe = ffprobe;
         this.videos = new VideoRepository(db);
         this.jobs = new TranscodeJobRepository(db);
+        this.quotaBytes = quotaBytes;
+    }
+
+    public long quotaBytes() {
+        return quotaBytes;
+    }
+
+    /** Bytes of originals the user already stores. */
+    public long usedBytes(long userId) {
+        return videos.totalBytesByOwner(userId);
     }
 
     /**
      * @throws InvalidMediaException if the file is not a video (the upload is deleted)
+     * @throws QuotaExceededException if it would exceed the user's storage quota (the upload is deleted)
      */
     public Video ingest(IngestRequest req) throws IOException, InterruptedException {
         long size = storage.size(req.getSourceKey());
+        if (quotaBytes > 0) {
+            long used = usedBytes(req.getOwnerId());
+            if (used + size > quotaBytes) {
+                storage.delete(req.getSourceKey());
+                throw new QuotaExceededException(used, quotaBytes);
+            }
+        }
         try {
             ffprobe.probe(storage.localPath(req.getSourceKey()));
         } catch (InvalidMediaException e) {

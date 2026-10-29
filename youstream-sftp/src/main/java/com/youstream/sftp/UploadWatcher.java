@@ -7,6 +7,7 @@ import com.youstream.common.storage.StorageService;
 import com.youstream.media.IngestRequest;
 import com.youstream.media.IngestService;
 import com.youstream.media.InvalidMediaException;
+import com.youstream.media.QuotaExceededException;
 import org.apache.sshd.server.session.ServerSession;
 import org.apache.sshd.sftp.server.FileHandle;
 import org.apache.sshd.sftp.server.Handle;
@@ -177,7 +178,7 @@ class UploadWatcher implements SftpEventListener, AutoCloseable {
                 + "visibility: " + video.getVisibility() + "\n"
                 + "watch: " + config.getPublicUrl() + "/watch/" + video.getPublicId() + "\n"
                 + "The video is being processed; check its progress in YouStream Studio.\n");
-        } catch (InvalidMediaException e) {
+        } catch (InvalidMediaException | QuotaExceededException e) {
             writeStatus(statusFile, "REJECTED " + e.getMessage() + "\n");
         } catch (Exception e) {
             log.error("SFTP ingest of {} for user {} failed", file, userId, e);

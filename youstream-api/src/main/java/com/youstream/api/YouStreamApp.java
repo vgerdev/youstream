@@ -14,13 +14,16 @@ import com.youstream.api.video.PublicVideoCache;
 import com.youstream.api.video.UploadRoutes;
 import com.youstream.api.video.VideoRoutes;
 import com.youstream.auth.AuthException;
+import com.youstream.auth.token.AccessClaims;
 import com.youstream.db.repo.VideoRepository;
 import com.youstream.media.InvalidMediaException;
+import com.youstream.media.QuotaExceededException;
 import io.jooby.Context;
 import io.jooby.Jooby;
 import io.jooby.MediaType;
 import io.jooby.StatusCode;
 import io.jooby.exception.StatusCodeException;
+import io.jooby.handler.AccessLogHandler;
 import io.jooby.handler.AssetHandler;
 import io.jooby.handler.AssetSource;
 import io.jooby.handler.CacheControl;
@@ -38,11 +41,17 @@ public class YouStreamApp extends Jooby {
         install(new Jackson3Module());
 
         error(this::handleError);
-        // before any route: framing and content-type rules apply to everything served
+        // before any route: access log and security headers apply to everything served
+        use(new AccessLogHandler(ctx -> {
+            AccessClaims user = ctx.getUser();
+            return user == null ? "-" : "u" + user.getUserId();
+        }));
         EmbedRoutes.installHeaders(this);
 
         if (services.getTokens() != null) {
             before(new AuthFilter(services.getTokens()));
+            // after the auth filter, so limits apply per signed-in user where possible
+            before(services.getRateLimits());
             new AuthRoutes(services).install(this);
         }
         if (services.getSshKeys() != null) {
@@ -99,6 +108,13 @@ public class YouStreamApp extends Jooby {
                 case UNAVAILABLE -> StatusCode.SERVICE_UNAVAILABLE;
             };
             error = auth.getReason().name().toLowerCase();
+        } else if (cause instanceof RateLimits.RateLimited limited) {
+            status = StatusCode.TOO_MANY_REQUESTS;
+            error = "rate_limited";
+            ctx.setResponseHeader("Retry-After", Long.toString(limited.retryAfterSeconds()));
+        } else if (cause instanceof QuotaExceededException) {
+            status = StatusCode.REQUEST_ENTITY_TOO_LARGE;
+            error = "quota_exceeded";
         } else if (cause instanceof StatusCodeException sce) {
             status = sce.getStatusCode();
             error = errorName(status);

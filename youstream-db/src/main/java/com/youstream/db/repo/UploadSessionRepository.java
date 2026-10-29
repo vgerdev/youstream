@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -53,6 +54,22 @@ public class UploadSessionRepository {
 
     public void delete(UUID id) {
         db.run(s -> s.sql("DELETE FROM upload_sessions WHERE id = ?").set(id).update(Outcome.VOID));
+    }
+
+    public List<UploadSession> listExpired(Instant now) {
+        return db.run(s -> s
+            .sql("SELECT " + COLUMNS + " FROM upload_sessions WHERE expires_at < ? ORDER BY expires_at LIMIT 1000")
+            .set(Rows.ts(now))
+            .select(new ListOutcome<>(UploadSessionRepository::map)));
+    }
+
+    /** Bytes reserved by a user's unfinished uploads (counted against the quota). */
+    public long pendingBytes(long userId, Instant now) {
+        return db.run(s -> s
+            .sql("SELECT COALESCE(SUM(total_bytes), 0) FROM upload_sessions WHERE user_id = ? AND expires_at >= ?")
+            .set(userId)
+            .set(Rows.ts(now))
+            .select(new ListOutcome<>(rs -> rs.getLong(1))).getFirst());
     }
 
     public int deleteExpired(Instant now) {
