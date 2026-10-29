@@ -1,0 +1,6 @@
+dependencies {
+    api libs.unboundid
+    implementation libs.slf4jApi
+
+    runtimeOnly libs.logback
+}

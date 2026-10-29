@@ -3,5 +3,10 @@ dependencies {
 
     implementation libs.unboundid
     implementation libs.javaJwt
+    implementation libs.nimbusOidc
     implementation libs.sshdCore
+
+    testImplementation project(':youstream-devldap')
+    testImplementation testFixtures(project(':youstream-db'))
+    testRuntimeOnly libs.logback
 }

@@ -1,8 +1,19 @@
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+
 plugins {
     id 'com.github.node-gradle.node' version '7.1.0' apply false
 }
 
 apply from: 'dependencies.gradle'
+
+// Integration tests share one remote test schema, so test tasks of different subprojects must not overlap.
+abstract class TestDatabaseLock implements BuildService<BuildServiceParameters.None> {
+}
+
+def testDatabaseLock = gradle.sharedServices.registerIfAbsent('testDatabaseLock', TestDatabaseLock) {
+    maxParallelUsages = 1
+}
 
 allprojects {
     group = 'com.youstream'
@@ -42,5 +53,8 @@ subprojects {
 
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
+        usesService(testDatabaseLock)
+        maxParallelForks = 1
+        systemProperty 'youstream.conf', rootProject.file('conf/local.conf').absolutePath
     }
 }

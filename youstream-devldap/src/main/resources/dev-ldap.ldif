@@ -1,0 +1,87 @@
+# Seed data for the YouStream development LDAP server. DEVELOPMENT ONLY: passwords are in clear text.
+#
+#   service account  cn=service,ou=system,dc=youstream,dc=local / service-secret
+#   alice            alice-pass   member of youstream-users and youstream-admins
+#   bob              bob-pass     member of youstream-users
+#   carol            carol-pass   no groups (useful for testing ldap.requiredGroup)
+
+dn: dc=youstream,dc=local
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+dc: youstream
+o: YouStream
+
+dn: ou=system,dc=youstream,dc=local
+objectClass: top
+objectClass: organizationalUnit
+ou: system
+
+dn: ou=people,dc=youstream,dc=local
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=youstream,dc=local
+objectClass: top
+objectClass: organizationalUnit
+ou: groups
+
+dn: cn=service,ou=system,dc=youstream,dc=local
+objectClass: top
+objectClass: person
+cn: service
+sn: service
+userPassword: service-secret
+
+dn: uid=alice,ou=people,dc=youstream,dc=local
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice
+cn: Alice Admin
+sn: Admin
+givenName: Alice
+mail: alice@youstream.local
+userPassword: alice-pass
+memberOf: cn=youstream-users,ou=groups,dc=youstream,dc=local
+memberOf: cn=youstream-admins,ou=groups,dc=youstream,dc=local
+
+dn: uid=bob,ou=people,dc=youstream,dc=local
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: bob
+cn: Bob Builder
+sn: Builder
+givenName: Bob
+mail: bob@youstream.local
+userPassword: bob-pass
+memberOf: cn=youstream-users,ou=groups,dc=youstream,dc=local
+
+dn: uid=carol,ou=people,dc=youstream,dc=local
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol
+cn: Carol Outsider
+sn: Outsider
+givenName: Carol
+mail: carol@youstream.local
+userPassword: carol-pass
+
+dn: cn=youstream-users,ou=groups,dc=youstream,dc=local
+objectClass: top
+objectClass: groupOfNames
+cn: youstream-users
+member: uid=alice,ou=people,dc=youstream,dc=local
+member: uid=bob,ou=people,dc=youstream,dc=local
+
+dn: cn=youstream-admins,ou=groups,dc=youstream,dc=local
+objectClass: top
+objectClass: groupOfNames
+cn: youstream-admins
+member: uid=alice,ou=people,dc=youstream,dc=local

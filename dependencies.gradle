@@ -9,6 +9,7 @@ ext {
         flyway        : '13.11.1',
         unboundid     : '7.0.5',
         javaJwt       : '4.6.2',
+        nimbusOidc    : '11.38.2',
         lombok        : '1.18.48',
         slf4j         : '2.0.20',
         logback       : '1.6.6',
@@ -39,6 +40,7 @@ ext {
         // auth
         unboundid            : "com.unboundid:unboundid-ldapsdk:${versions.unboundid}",
         javaJwt              : "com.auth0:java-jwt:${versions.javaJwt}",
+        nimbusOidc           : "com.nimbusds:oauth2-oidc-sdk:${versions.nimbusOidc}",
 
         // common
         lombok               : "org.projectlombok:lombok:${versions.lombok}",

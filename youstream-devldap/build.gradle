@@ -1,0 +1,11 @@
+plugins {
+    id 'application'
+}
+
+description = 'Embedded UnboundID LDAP server with seed users, for development and tests'
+
+apply from: 'dependencies.gradle'
+
+application {
+    mainClass = 'com.youstream.devldap.DevLdapServer'
+}
