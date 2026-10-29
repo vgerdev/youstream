@@ -273,8 +273,8 @@ Jooby app with `jooby-undertow`, the `jooby-jackson` JSON module, MVC controller
 | Reactions | `PUT /api/videos/{pid}/reaction {value: 1\|-1\|0}` (0 clears) |
 | Comments | `GET /api/videos/{pid}/comments?cursor=&parent=`, `POST /api/videos/{pid}/comments`, `PATCH/DELETE /api/comments/{id}` |
 | Channels | `GET /api/channels/{handle}`, `GET /api/channels/{handle}/videos`, `GET /api/channels/{handle}/playlists` (Phase 6), `PUT/DELETE /api/channels/{handle}/subscription`, `GET /api/feed/subscriptions`, `GET /api/me/subscriptions`, `PATCH /api/me` (handle, display name, bio). Channel pages live at `/c/{handle}` in the SPA |
-| Search | `GET /api/search?q=&type=video\|channel\|playlist&cursor=`, using `websearch_to_tsquery` ranked by `ts_rank` |
-| Playlists | `POST /api/playlists`, `GET/PATCH/DELETE /api/playlists/{pid}`, `POST /api/playlists/{pid}/items`, `PUT /api/playlists/{pid}/items/order`, `DELETE /api/playlists/{pid}/items/{videoPid}` |
+| Search | `GET /api/search?q=&type=video\|channel\|playlist&cursor=`: every word becomes a prefix term (`sail:* & carib:*`, built server-side from letters/digits only), ranked by `ts_rank`, offset paging up to 1000 results |
+| Playlists | `POST /api/playlists`, `GET/PATCH/DELETE /api/playlists/{pid}`, `POST /api/playlists/{pid}/items`, `PUT /api/playlists/{pid}/items` (order), `DELETE /api/playlists/{pid}/items/{videoPid}`, `GET /api/me/playlists?contains=`, `GET /api/channels/{handle}/playlists` |
 | Media | `GET /media/{pid}/{token}/**` (HLS playlists and segments with long-cache headers), `GET /thumbs/{pid}/poster.jpg`, `GET /avatars/{userId}.jpg`. All support range requests |
 | oEmbed | `GET /oembed?url=` (optional, so pasted links unfurl) |
 | SPA | Static assets from `public/` on the classpath, and any non-`/api`, non-`/media` route falls back to `index.html` |
@@ -352,7 +352,7 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 | **3. Core vertical slice** ✅ | StorageService, resumable upload API, IngestService, job queue, TranscodeWorker, media serving with playback tokens; Upload, Studio, Home, Watch pages with the HLS player | Upload in the browser → progress → watch with adaptive quality |
 | **4. SFTP** ✅ | SSHD server, LDAP password + SSH key auth, virtual inbox, event-driven ingest, sidecar metadata, status files; SSH Keys settings page | `sftp -P 2222 user@host` → `put clip.mp4` → video appears in Studio and plays |
 | **5. Social** ✅ | Comments (with replies), likes/dislikes, channel pages, subscriptions, subscription feed, view counting | All features usable in the UI and covered by API tests |
-| **6. Discovery & sharing** | Full-text search, playlists, visibility enforcement, share dialog, `/embed/:pid`, oEmbed | Unlisted links work, private videos return 404 to others, the embed iframe plays |
+| **6. Discovery & sharing** ✅ | Full-text search, playlists, visibility enforcement, share dialog, `/embed/:pid`, oEmbed | Unlisted links work, private videos return 404 to others, the embed iframe plays |
 | **7. Hardening & packaging** | Rate limits, quotas, security headers, error pages, cleanup jobs (expired upload sessions, orphaned files), `installDist` distribution, optional Dockerfile, README with run instructions | Fresh clone → configure `local.conf` → `./gradlew :youstream-server:run` works |
 
 ## 14. Assumptions to confirm
@@ -373,3 +373,6 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 - **Views** count once per viewer per video per day, after 3 s of playback (or half of a shorter video). Anonymous viewers are keyed by a SHA-256 of IP and User-Agent, so raw IPs are never stored.
 - **Comments** are soft-deleted; a deleted top-level comment stays (as "deleted") while it still has replies. Authors edit; authors, the video owner and admins delete.
 - **Frontend session restore** starts before the first render and every API call waits for it, so per-user fields (my reaction, subscribed, edit rights) are correct on a direct page load.
+- **Playlists** show only items the viewer may watch (ready, and not someone else's private video); you can only add videos you can watch. SPA routes: `/playlist/{id}`, `/playlists`, `/watch/{id}?list={playlistId}` (side panel, auto-advance).
+- **Framing**: every response carries `frame-ancestors 'none'` + `X-Frame-Options: DENY`, except `/embed/*` (`frame-ancestors *`). Also `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`. Private videos cannot be embedded; unlisted ones can (anyone with the link may watch).
+- **oEmbed** at `/oembed?url=` (JSON only) for public and unlisted videos; unlisted responses omit the thumbnail URL (it would need a signed token). No discovery `<link>` tag yet, since the SPA has no per-page server rendering.

@@ -49,6 +49,9 @@ public class AppServices {
     /** Origin the browser is sent back to after Microsoft sign-in; empty = same origin. */
     @Builder.Default
     String frontendUrl = "";
+    /** Public address of the site, used in links handed to other sites (oEmbed, embed snippets). */
+    @Builder.Default
+    String publicUrl = "http://localhost:8080";
 
     @Builder.Default
     long maxUploadBytes = 10L << 30;

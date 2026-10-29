@@ -1,5 +1,5 @@
-import { Show, type ParentProps } from 'solid-js';
-import { A, useLocation, useNavigate } from '@solidjs/router';
+import { createEffect, createSignal, Show, type ParentProps } from 'solid-js';
+import { A, useLocation, useNavigate, useSearchParams } from '@solidjs/router';
 import { useAuth } from '../auth/AuthProvider';
 
 export default function AppShell(props: ParentProps) {
@@ -7,19 +7,44 @@ export default function AppShell(props: ParentProps) {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [params] = useSearchParams<{ q?: string }>();
+  const [query, setQuery] = createSignal('');
+  // keep the box in step with /search?q=...
+  createEffect(() => {
+    if (location.pathname === '/search') setQuery(params.q ?? '');
+  });
+
   const signOut = async () => {
     await auth.logout();
     navigate('/');
   };
 
+  const submitSearch = (e: SubmitEvent) => {
+    e.preventDefault();
+    if (query().trim()) navigate(`/search?q=${encodeURIComponent(query().trim())}`);
+  };
+
   return (
+    <Show when={!location.pathname.startsWith('/embed/')} fallback={props.children}>
     <div class="min-h-screen flex flex-col">
       <header class="h-14 px-4 flex items-center gap-4 border-b border-neutral-200 dark:border-neutral-800">
         <A href="/" class="flex items-center gap-1 font-bold text-lg">
           <span class="inline-block w-7 h-5 rounded bg-red-600 text-white text-xs leading-5 text-center">▶</span>
           YouStream
         </A>
-        <div class="flex-1" />
+        <form role="search" class="mx-auto flex w-full max-w-xl" onSubmit={submitSearch}>
+          <input
+            type="search"
+            aria-label="Search"
+            placeholder="Search"
+            class="min-w-0 flex-1 rounded-l-full border border-neutral-300 dark:border-neutral-700 bg-transparent px-4 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-600"
+            value={query()}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+          />
+          <button type="submit" aria-label="Search" class="rounded-r-full border border-l-0 border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-900 px-4 text-sm">
+            🔍
+          </button>
+        </form>
         <Show when={!auth.loading()}>
           <Show
             when={auth.user()}
@@ -42,8 +67,11 @@ export default function AppShell(props: ParentProps) {
                 >
                   + Upload
                 </A>
-                <A href="/subscriptions" class="text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
+                <A href="/subscriptions" class="hidden text-neutral-500 hover:text-neutral-900 dark:hover:text-white md:inline">
                   Subscriptions
+                </A>
+                <A href="/playlists" class="hidden text-neutral-500 hover:text-neutral-900 dark:hover:text-white md:inline">
+                  Playlists
                 </A>
                 <A href="/studio" class="text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
                   Studio
@@ -64,5 +92,6 @@ export default function AppShell(props: ParentProps) {
       </header>
       <main class="flex-1 p-4">{props.children}</main>
     </div>
+    </Show>
   );
 }

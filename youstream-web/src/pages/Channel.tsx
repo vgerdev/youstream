@@ -1,7 +1,9 @@
 import { createSignal, For, Match, Show, Switch } from 'solid-js';
 import { A, useParams } from '@solidjs/router';
 import { useInfiniteQuery, useQuery } from '@tanstack/solid-query';
+import { listChannelPlaylists } from '../api/playlists';
 import { getChannel, listChannelVideos } from '../api/social';
+import PlaylistCard from '../components/PlaylistCard';
 import Avatar from '../components/Avatar';
 import SubscribeButton from '../components/SubscribeButton';
 import VideoCard from '../components/VideoCard';
@@ -15,6 +17,11 @@ export default function Channel() {
     queryFn: ({ pageParam }) => listChannelVideos(params.handle, pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
+    enabled: channel.isSuccess,
+  }));
+  const playlists = useQuery(() => ({
+    queryKey: ['channel-playlists', params.handle],
+    queryFn: () => listChannelPlaylists(params.handle),
     enabled: channel.isSuccess,
   }));
   const [subscription, setSubscription] = createSignal<{ subscribed: boolean; count: number } | null>(null);
@@ -78,6 +85,12 @@ export default function Channel() {
                   >
                     Show more
                   </button>
+                </div>
+              </Show>
+              <Show when={playlists.data?.length}>
+                <h2 class="pt-4 text-lg font-bold">Playlists</h2>
+                <div class="grid gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  <For each={playlists.data}>{(p) => <PlaylistCard playlist={p} />}</For>
                 </div>
               </Show>
             </>

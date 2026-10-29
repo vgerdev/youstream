@@ -16,6 +16,12 @@ export default function Player(props: {
   startAt?: number;
   /** Fired once, after a few seconds of actual playback (used to count a view). */
   onWatched?: () => void;
+  onEnded?: () => void;
+  /** Gives the caller the <video> element (e.g. to read the current time for sharing). */
+  onElement?: (video: HTMLVideoElement) => void;
+  autoplay?: boolean;
+  /** Fill the parent (embed page) instead of a rounded 16:9 box, with no quality menu below. */
+  fill?: boolean;
 }) {
   let video!: HTMLVideoElement;
   let hls: Hls | undefined;
@@ -41,6 +47,10 @@ export default function Player(props: {
       setError('Your browser cannot play this video.');
     }
     if (props.startAt) video.currentTime = props.startAt;
+    props.onElement?.(video);
+    if (props.onEnded) video.addEventListener('ended', props.onEnded);
+    // browsers allow autoplay with sound after a user gesture (e.g. clicking through a playlist)
+    if (props.autoplay) void video.play().catch(() => undefined);
 
     // a view = 3 s of playback, or half of a shorter video
     let played = 0;
@@ -66,14 +76,14 @@ export default function Player(props: {
   };
 
   return (
-    <div class="space-y-2">
-      <div class="relative aspect-video overflow-hidden rounded-xl bg-black">
+    <div class={props.fill ? 'h-full' : 'space-y-2'}>
+      <div class={props.fill ? 'relative h-full bg-black' : 'relative aspect-video overflow-hidden rounded-xl bg-black'}>
         <video ref={video} class="h-full w-full" controls playsinline poster={props.poster ?? undefined} />
         <Show when={error()}>
           <p class="absolute inset-0 grid place-items-center text-white">{error()}</p>
         </Show>
       </div>
-      <Show when={levels().length > 1}>
+      <Show when={!props.fill && levels().length > 1}>
         <label class="flex items-center justify-end gap-2 text-sm text-neutral-500">
           Quality
           <select

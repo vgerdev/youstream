@@ -97,6 +97,7 @@ public final class YouStreamServer {
             .playbackTokens(new PlaybackTokens(secret, conf.getDuration("media.playbackTokenTtl"), clock))
             .secureCookies(conf.getBoolean("auth.secureCookies"))
             .frontendUrl(conf.getString("auth.frontendUrl").replaceAll("/+$", ""))
+            .publicUrl(conf.getString("app.publicUrl").replaceAll("/+$", ""))
             .maxUploadBytes(conf.getBytes("upload.maxBytes"))
             .uploadChunkBytes(conf.getBytes("upload.chunkBytes"))
             .build();

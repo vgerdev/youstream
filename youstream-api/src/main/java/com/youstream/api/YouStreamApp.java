@@ -6,6 +6,9 @@ import com.youstream.api.auth.SshKeyRoutes;
 import com.youstream.auth.SshKeyService;
 import com.youstream.api.social.ChannelRoutes;
 import com.youstream.api.social.CommentRoutes;
+import com.youstream.api.social.PlaylistRoutes;
+import com.youstream.api.social.SearchRoutes;
+import com.youstream.api.video.EmbedRoutes;
 import com.youstream.api.video.MediaRoutes;
 import com.youstream.api.video.PublicVideoCache;
 import com.youstream.api.video.UploadRoutes;
@@ -35,6 +38,8 @@ public class YouStreamApp extends Jooby {
         install(new Jackson3Module());
 
         error(this::handleError);
+        // before any route: framing and content-type rules apply to everything served
+        EmbedRoutes.installHeaders(this);
 
         if (services.getTokens() != null) {
             before(new AuthFilter(services.getTokens()));
@@ -50,6 +55,10 @@ public class YouStreamApp extends Jooby {
             new MediaRoutes(services, publicVideos).install(this);
             new CommentRoutes(services).install(this);
             new ChannelRoutes(services).install(this);
+            PlaylistRoutes playlists = new PlaylistRoutes(services);
+            playlists.install(this);
+            new SearchRoutes(services, playlists.views()).install(this);
+            new EmbedRoutes(services).install(this);
         }
 
         get("/api/health", ctx -> {

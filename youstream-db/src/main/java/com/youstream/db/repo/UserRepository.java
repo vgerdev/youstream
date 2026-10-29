@@ -59,6 +59,15 @@ public class UserRepository {
             .stream().findFirst());
     }
 
+    /** Channels whose handle or display name matches (prefix terms, 'simple' dictionary), most subscribed first. */
+    public List<User> searchChannels(String tsQuery, int limit, int offset) {
+        return db.run(s -> s
+            .sql("SELECT " + COLUMNS + " FROM users u WHERE u.search @@ to_tsquery('simple', ?)"
+                + " ORDER BY u.subscriber_count DESC, ts_rank(u.search, to_tsquery('simple', ?)) DESC, u.id LIMIT ? OFFSET ?")
+            .set(tsQuery).set(tsQuery).set(limit).set(offset)
+            .select(new ListOutcome<>(UserRepository::map)));
+    }
+
     public boolean usernameExists(String username) {
         return db.run(s -> s.sql("SELECT 1 FROM users WHERE username = ?").set(username).select(Outcome.NOT_EMPTY));
     }

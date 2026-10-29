@@ -100,6 +100,16 @@ public class VideoRepository {
             .select(new ListOutcome<>(VideoRepository::map)));
     }
 
+    /** Public, ready videos matching a {@code to_tsquery} string (see SearchQuery), best match first. */
+    public List<Video> search(String tsQuery, int limit, int offset) {
+        return db.run(s -> s
+            .sql("SELECT " + COLUMNS + " FROM videos WHERE visibility = 'PUBLIC' AND status = 'READY'"
+                + " AND search @@ to_tsquery('english', ?)"
+                + " ORDER BY ts_rank(search, to_tsquery('english', ?)) DESC, published_at DESC, id DESC LIMIT ? OFFSET ?")
+            .set(tsQuery).set(tsQuery).set(limit).set(offset)
+            .select(new ListOutcome<>(VideoRepository::map)));
+    }
+
     public long countPublicByOwner(long ownerId) {
         return db.run(s -> s
             .sql("SELECT count(*) FROM videos WHERE owner_id = ? AND visibility = 'PUBLIC' AND status = 'READY'")
