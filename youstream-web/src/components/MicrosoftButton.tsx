@@ -11,6 +11,8 @@ export default function MicrosoftButton(props: Props) {
   return (
     <a
       href={props.href ?? '#'}
+      // the sign-in URL is a server route (/api/...): stop the SPA router from handling the click client-side
+      rel="external"
       onClick={props.onClick}
       class="flex w-full items-center justify-center gap-3 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 font-medium hover:bg-neutral-50 dark:hover:bg-neutral-800"
     >

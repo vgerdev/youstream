@@ -6,7 +6,8 @@ import tailwindcss from '@tailwindcss/vite';
 const backend = 'http://localhost:8080';
 
 export default defineConfig({
-  plugins: [solid(), tailwindcss()],
+  // solid-refresh (HMR) cannot load under Vitest
+  plugins: [solid({ hot: !process.env.VITEST }), tailwindcss()],
   server: {
     port: 3000,
     proxy: {
