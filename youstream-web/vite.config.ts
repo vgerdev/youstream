@@ -20,6 +20,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     target: 'es2022',
+    // hls.js (~580 kB) is its own chunk, loaded only by the player
+    chunkSizeWarningLimit: 700,
   },
   test: {
     environment: 'happy-dom',

@@ -2,7 +2,13 @@ package com.youstream.api;
 
 import com.youstream.api.auth.AuthFilter;
 import com.youstream.api.auth.AuthRoutes;
+import com.youstream.api.video.MediaRoutes;
+import com.youstream.api.video.PublicVideoCache;
+import com.youstream.api.video.UploadRoutes;
+import com.youstream.api.video.VideoRoutes;
 import com.youstream.auth.AuthException;
+import com.youstream.db.repo.VideoRepository;
+import com.youstream.media.InvalidMediaException;
 import io.jooby.Context;
 import io.jooby.Jooby;
 import io.jooby.MediaType;
@@ -29,6 +35,12 @@ public class YouStreamApp extends Jooby {
         if (services.getTokens() != null) {
             before(new AuthFilter(services.getTokens()));
             new AuthRoutes(services).install(this);
+        }
+        if (services.getDb() != null) {
+            PublicVideoCache publicVideos = new PublicVideoCache(new VideoRepository(services.getDb()));
+            new VideoRoutes(services, publicVideos).install(this);
+            new UploadRoutes(services).install(this);
+            new MediaRoutes(services, publicVideos).install(this);
         }
 
         get("/api/health", ctx -> {
@@ -72,6 +84,9 @@ public class YouStreamApp extends Jooby {
         } else if (cause instanceof StatusCodeException sce) {
             status = sce.getStatusCode();
             error = errorName(status);
+        } else if (cause instanceof InvalidMediaException) {
+            status = StatusCode.UNPROCESSABLE_ENTITY;
+            error = "invalid_media";
         } else {
             error = errorName(status);
             if (status.value() >= 500) {

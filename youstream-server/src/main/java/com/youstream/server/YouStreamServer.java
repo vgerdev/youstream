@@ -8,10 +8,17 @@ import com.youstream.auth.entra.EntraConfig;
 import com.youstream.auth.entra.EntraOidcService;
 import com.youstream.auth.ldap.LdapAuthenticator;
 import com.youstream.auth.ldap.LdapConfig;
+import com.youstream.auth.token.PlaybackTokens;
 import com.youstream.auth.token.RefreshTokenService;
 import com.youstream.auth.token.TokenService;
+import com.youstream.common.storage.LocalDiskStorage;
 import com.youstream.db.Database;
 import com.youstream.db.DbConfig;
+import com.youstream.media.Ffprobe;
+import com.youstream.media.IngestService;
+import com.youstream.media.MediaConfig;
+import com.youstream.media.ProcessRunner;
+import com.youstream.media.TranscodeWorkerPool;
 import io.jooby.Environment;
 import io.jooby.EnvironmentOptions;
 import io.jooby.ExecutionMode;
@@ -20,12 +27,14 @@ import io.jooby.undertow.UndertowServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Locale;
 
 /**
- * Entry point: loads conf/application.conf (+ local.conf), migrates the database, then starts the HTTP server.
- * Later phases also start the SFTP server and transcode workers here.
+ * Entry point: loads conf/application.conf (+ local.conf), migrates the database, then starts the HTTP server and
+ * the transcode workers. Phase 4 adds the SFTP server.
  */
 public final class YouStreamServer {
 
@@ -34,7 +43,7 @@ public final class YouStreamServer {
     private YouStreamServer() {
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         Environment env = Environment.loadEnvironment(new EnvironmentOptions());
         Config conf = env.getConfig();
         Clock clock = Clock.systemUTC();
@@ -42,24 +51,53 @@ public final class YouStreamServer {
         Database database = new Database(dbConfig(conf));
         database.migrate();
 
+        LocalDiskStorage storage = new LocalDiskStorage(Path.of(conf.getString("storage.root")));
+        log.info("Storing media in {}", storage.root());
+        MediaConfig media = mediaConfig(conf);
+        ProcessRunner runner = new ProcessRunner();
+        TranscodeWorkerPool workers = new TranscodeWorkerPool(database.db(), storage, media, runner, clock);
+
+        String secret = conf.getString("jwt.secret");
         AppServices services = AppServices.builder()
             .databaseHealthy(database.db()::isHealthy)
+            .db(database.db())
+            .storage(storage)
+            .ingest(new IngestService(database.db(), storage, new Ffprobe(media.getFfprobe(), runner)))
             .ldap(ldap(conf))
             .entra(entra(conf))
             .users(new UserService(database.db(), clock))
-            .tokens(new TokenService(conf.getString("jwt.secret"), conf.getDuration("jwt.accessTtl"), clock))
+            .tokens(new TokenService(secret, conf.getDuration("jwt.accessTtl"), clock))
             .refreshTokens(new RefreshTokenService(database.db(), conf.getDuration("jwt.refreshTtl"), clock))
+            .playbackTokens(new PlaybackTokens(secret, conf.getDuration("media.playbackTokenTtl"), clock))
             .secureCookies(conf.getBoolean("auth.secureCookies"))
             .frontendUrl(conf.getString("auth.frontendUrl").replaceAll("/+$", ""))
+            .maxUploadBytes(conf.getBytes("upload.maxBytes"))
+            .uploadChunkBytes(conf.getBytes("upload.chunkBytes"))
             .build();
 
         // WORKER mode: handlers do blocking JDBC/LDAP/file work
         Jooby.runApp(args, new UndertowServer(), ExecutionMode.WORKER, () -> {
             YouStreamApp app = new YouStreamApp(services);
             app.setEnvironment(env);
-            app.onStop(database);
+            app.onStarted(workers::start);
+            app.onStop(() -> {
+                // workers release their running jobs, which needs the database
+                workers.close();
+                database.close();
+            });
             return app;
         });
+    }
+
+    static MediaConfig mediaConfig(Config conf) {
+        Config c = conf.getConfig("media");
+        return MediaConfig.builder()
+            .ffmpeg(c.getString("ffmpeg"))
+            .ffprobe(c.getString("ffprobe"))
+            .workers(c.getInt("workers"))
+            .segmentSeconds(c.getInt("segmentSeconds"))
+            .preset(c.getString("preset"))
+            .build();
     }
 
     static DbConfig dbConfig(Config conf) {

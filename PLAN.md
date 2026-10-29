@@ -235,7 +235,9 @@ data/
 - Builds the ladder from the source height, never upscaling: 1080p / 5000k, 720p / 2800k, 480p / 1400k, 360p / 800k, plus AAC 128k audio.
 - A single FFmpeg run produces every rendition: `-filter_complex split+scale`, `-var_stream_map`, `-f hls -hls_time 6 -hls_playlist_type vod -hls_segment_type fmp4 -master_pl_name master.m3u8`, H.264 `-preset veryfast` with GOPs aligned to the segment length.
 - `-progress pipe:1` is parsed to update `transcode_jobs.progress`. The Studio UI polls this.
-- Also produces a poster frame at 10 % of the duration and a thumbnail sprite with a WebVTT file for scrub previews.
+- Also produces a poster frame at 10 % of the duration. (Thumbnail sprite + WebVTT scrub previews: deferred to Phase 7.)
+- Files without a duration header (browser/screen recordings from MediaRecorder) are accepted; progress is not reported and the duration is measured from the produced playlist.
+- FFmpeg output paths are passed with forward slashes, otherwise Windows backslashes end up in the playlist URIs.
 - On success, writes `video_renditions` and sets the video to `READY` with `published_at`.
 - FFmpeg runs through `ProcessBuilder` with an argument list, never a shell string, and has a per-job timeout.
 
@@ -264,7 +266,7 @@ Jooby app with `jooby-undertow`, the `jooby-jackson` JSON module, MVC controller
 |---|---|
 | Auth | `GET /api/auth/methods` (which logins are enabled), `POST /api/auth/login` (LDAP), `GET /api/auth/microsoft/login`, `GET /api/auth/microsoft/callback`, `POST /api/me/identities/microsoft` (link accounts), `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/me`, `PATCH /api/me` (handle, bio, avatar) |
 | SSH keys | `GET/POST /api/me/ssh-keys`, `DELETE /api/me/ssh-keys/{id}` |
-| Upload (resumable) | `POST /api/uploads` → `{id, chunkBytes}`; `PUT /api/uploads/{id}` with `Content-Range` (idempotent chunks, resumable after a disconnect); `GET /api/uploads/{id}` (bytes received); `POST /api/uploads/{id}/complete` with metadata → IngestService |
+| Upload (resumable) | `POST /api/uploads` → `{id, chunkBytes}`; `PUT /api/uploads/{id}` with `Content-Range` (chunks in order; re-sent chunks are accepted, a gap returns 409 with the current offset); `GET /api/uploads/{id}` (bytes received); `POST /api/uploads/{id}/complete` with metadata → IngestService |
 | Videos | `GET /api/videos?feed=latest\|trending&cursor=`, `GET /api/videos/{pid}`, `PATCH /api/videos/{pid}`, `DELETE /api/videos/{pid}`, `GET /api/videos/{pid}/status`, `POST /api/videos/{pid}/views`, `GET /api/me/videos` (Studio) |
 | Reactions | `PUT /api/videos/{pid}/reaction {value: 1\|-1}`, `DELETE /api/videos/{pid}/reaction` |
 | Comments | `GET /api/videos/{pid}/comments?cursor=&parent=`, `POST /api/videos/{pid}/comments`, `PATCH/DELETE /api/comments/{id}` |
@@ -309,7 +311,7 @@ src/
 ```
 
 - **Share dialog**: copy link, copy link at the current timestamp (`?t=`), and copy the embed `<iframe>` snippet.
-- **Upload**: files are split into 16 MB chunks with `Blob.slice` and sent with up to 3 parallel `PUT`s. The upload id is kept in `localStorage` so it can resume after a reload.
+- **Upload**: files are split into 16 MB chunks with `Blob.slice` and sent one after another (retried with backoff). The upload id is kept in `localStorage` so it can resume after a reload.
 - **Theming**: light and dark themes through Tailwind's `dark:` variant.
 
 ## 11. Server wiring (`youstream-server`)
@@ -345,7 +347,7 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 | **0. Bootstrap** | Gradle 9.1.0 wrapper, `settings.gradle`, root `build.gradle` + `dependencies.gradle`, the `youstream-*` skeletons each with `build.gradle` + `dependencies.gradle`, Lombok, `.gitignore`, `conf/`. **I'll ask you for the PostgreSQL and AD connection details here.** | `./gradlew build` is green; the server starts and serves a "hello" SPA page |
 | **1. DB & domain** ✅ | Hikari, Flyway V1 schema (all tables), Lombok models, `Db` session/transaction helper, repositories for users/identities, refresh tokens, SSH keys, videos/renditions, transcode jobs, upload sessions; `TestDatabase` test fixture. Social repositories (comments, reactions, subscriptions, playlists, views) arrive with their features in Phases 5–6 | Migrations apply to the remote DB; repository tests pass |
 | **2. Auth** ✅ | `youstream-devldap`, LDAP authenticator, Entra OIDC, `user_identities` + user upsert, JWT + refresh rotation with reuse detection, login throttling, `/api/me`, account linking, Login and Account pages, AuthProvider | Signing in as `alice` (dev LDAP) and with a Microsoft account both work end to end |
-| **3. Core vertical slice** | StorageService, resumable upload API, IngestService, job queue, TranscodeWorker, media serving with playback tokens; Upload, Studio, Home, Watch pages with the HLS player | Upload in the browser → progress → watch with adaptive quality |
+| **3. Core vertical slice** ✅ | StorageService, resumable upload API, IngestService, job queue, TranscodeWorker, media serving with playback tokens; Upload, Studio, Home, Watch pages with the HLS player | Upload in the browser → progress → watch with adaptive quality |
 | **4. SFTP** | SSHD server, LDAP password + SSH key auth, virtual inbox, event-driven ingest, sidecar metadata, status files; SSH Keys settings page | `sftp -P 2222 user@host` → `put clip.mp4` → video appears in Studio and plays |
 | **5. Social** | Comments (with replies), likes/dislikes, channel pages, subscriptions, subscription feed, view counting | All features usable in the UI and covered by API tests |
 | **6. Discovery & sharing** | Full-text search, playlists, visibility enforcement, share dialog, `/embed/:pid`, oEmbed | Unlisted links work, private videos return 404 to others, the embed iframe plays |

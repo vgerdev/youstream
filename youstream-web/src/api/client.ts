@@ -81,20 +81,29 @@ export function refreshSession(): Promise<Session | null> {
 
 interface RequestOptions {
   method?: string;
+  /** JSON-encoded */
   body?: unknown;
+  /** sent as-is (e.g. a file chunk) */
+  raw?: Blob;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  /** statuses returned as data instead of thrown (e.g. 409 from a chunk upload) */
+  accept?: number[];
 }
 
-/** JSON request to /api; on 401 with an expired access token it refreshes once and retries. */
-export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
+/** Request to /api with the access token; on 401 it refreshes once and retries. */
+export async function apiResponse(path: string, options: RequestOptions = {}): Promise<Response> {
   const send = () => {
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = { Accept: 'application/json', ...options.headers };
     if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (options.raw !== undefined) headers['Content-Type'] ??= 'application/octet-stream';
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     return fetch(`/api${path}`, {
       method: options.method ?? 'GET',
       headers,
       credentials: 'same-origin',
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: options.signal,
+      body: options.raw ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
     });
   };
 
@@ -104,7 +113,13 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
       res = await send();
     }
   }
-  if (!res.ok) throw await toError(res);
+  if (!res.ok && !options.accept?.includes(res.status)) throw await toError(res);
+  return res;
+}
+
+/** JSON request to /api; see {@link apiResponse}. */
+export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const res = await apiResponse(path, options);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }

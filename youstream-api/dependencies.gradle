@@ -11,5 +11,6 @@ dependencies {
     testImplementation libs.joobyUndertow
     testImplementation project(':youstream-devldap')
     testImplementation testFixtures(project(':youstream-db'))
+    testImplementation testFixtures(project(':youstream-media'))
     testRuntimeOnly libs.logback
 }

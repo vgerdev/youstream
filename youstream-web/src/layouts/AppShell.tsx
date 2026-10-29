@@ -36,6 +36,15 @@ export default function AppShell(props: ParentProps) {
           >
             {(user) => (
               <div class="flex items-center gap-3 text-sm">
+                <A
+                  href="/upload"
+                  class="rounded-full border border-neutral-300 dark:border-neutral-700 px-3 py-1 font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                >
+                  + Upload
+                </A>
+                <A href="/studio" class="text-neutral-500 hover:text-neutral-900 dark:hover:text-white">
+                  Studio
+                </A>
                 <A href="/account" class="flex items-center gap-2 hover:underline">
                   <span class="grid h-8 w-8 place-items-center rounded-full bg-red-600 font-semibold text-white">
                     {user().displayName.charAt(0).toUpperCase()}

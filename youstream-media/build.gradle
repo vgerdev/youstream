@@ -1,3 +1,8 @@
+plugins {
+    // MediaTestSupport (FFmpeg lookup, sample clips) is shared with other subprojects' tests
+    id 'java-test-fixtures'
+}
+
 description = 'FFmpeg/ffprobe wrappers, transcode job queue and ingest service'
 
 apply from: 'dependencies.gradle'

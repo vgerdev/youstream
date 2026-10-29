@@ -78,12 +78,34 @@ public class TranscodeJobRepository {
             .getFirst());
     }
 
+    /** Marks the job FAILED without retrying (the input can never succeed). */
+    public void failPermanently(long jobId, String error) {
+        db.run(s -> s
+            .sql("UPDATE transcode_jobs SET status = 'FAILED', error = ?, locked_by = NULL, locked_at = NULL,"
+                + " finished_at = now() WHERE id = ?")
+            .set(error)
+            .set(jobId)
+            .update(Outcome.VOID));
+    }
+
     /** Puts RUNNING jobs whose lock is older than {@code lockedBefore} back in the queue (worker crashed). */
     public int requeueStale(Instant lockedBefore) {
         return db.run(s -> s
             .sql("UPDATE transcode_jobs SET status = 'QUEUED', locked_by = NULL, locked_at = NULL, run_after = now()"
                 + " WHERE status = 'RUNNING' AND locked_at < ?")
             .set(Rows.ts(lockedBefore))
+            .update(Outcome.UPDATE_COUNT));
+    }
+
+    /**
+     * Requeues RUNNING jobs whose worker id starts with {@code prefix}: on startup, jobs a previous process on
+     * this host left behind when it crashed.
+     */
+    public int requeueByWorkerPrefix(String prefix) {
+        return db.run(s -> s
+            .sql("UPDATE transcode_jobs SET status = 'QUEUED', locked_by = NULL, locked_at = NULL, run_after = now()"
+                + " WHERE status = 'RUNNING' AND starts_with(locked_by, ?)")
+            .set(prefix)
             .update(Outcome.UPDATE_COUNT));
     }
 

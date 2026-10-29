@@ -1,3 +1,12 @@
 dependencies {
     api project(':youstream-db')
+
+    implementation libs.jacksonDatabind
+    implementation libs.slf4jApi
+
+    testFixturesApi platform(libs.junitBom)
+    testFixturesApi libs.junitJupiter
+
+    testImplementation testFixtures(project(':youstream-db'))
+    testRuntimeOnly libs.logback
 }
