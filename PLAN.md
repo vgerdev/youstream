@@ -354,6 +354,10 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 | **5. Social** ✅ | Comments (with replies), likes/dislikes, channel pages, subscriptions, subscription feed, view counting | All features usable in the UI and covered by API tests |
 | **6. Discovery & sharing** ✅ | Full-text search, playlists, visibility enforcement, share dialog, `/embed/:pid`, oEmbed | Unlisted links work, private videos return 404 to others, the embed iframe plays |
 | **7. Hardening & packaging** ✅ | Rate limits, quotas, security headers, error pages, cleanup jobs (expired upload sessions, orphaned files), `installDist` distribution, optional Dockerfile, README with run instructions | Fresh clone → configure `local.conf` → `./gradlew :youstream-server:run` works |
+| **8. Cluster-ready server** | Process roles (`web`, `sftp`, `transcode`) per pod; `migrate` and `maintenance` one-shot commands; proxy-aware client IPs (HTTP `X-Forwarded-For`, SFTP PROXY protocol); login throttle shared through PostgreSQL; SFTP host key loaded from a mounted secret; container JVM flags. See §16 | All tests pass; three local processes with different roles share one `data/` folder and the upload → transcode → watch flow works across them |
+| **9. Cluster platform** | Media node pool, Gateway API + Envoy Gateway, cert-manager + Let's Encrypt, in-cluster NFS (RWX storage class), production database and role, Entra redirect URI, DNS. Scripted in `deploy/platform/` | `https://youstream.paulsdavenport3.com` answers with a valid certificate (from a placeholder backend); an RWX test PVC mounts on two nodes |
+| **10. Helm charts** | `deploy/helm/youstream` (web, sftp, transcode, migrate hook, maintenance CronJob, Gateway route, RWX PVC, network policies) and `deploy/helm/openldap` (Debian `slapd` image). Values per cluster: `values-doks.yaml`, `values-eks.yaml` | `helm install` from a laptop brings the site up; LDAP + Microsoft sign-in, browser upload, SFTP upload and playback work in production |
+| **11. CI/CD & go-live** | GitHub Actions: build + all tests (Postgres service container, FFmpeg), images to GHCR, `helm upgrade --atomic` to a `production` environment; smoke test; backups; runbook | A push to `master` deploys itself; rollback with `helm rollback` is documented and tried once |
 
 ## 14. Assumptions to confirm
 
@@ -378,3 +382,123 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 - **oEmbed** at `/oembed?url=` (JSON only) for public and unlisted videos; unlisted responses omit the thumbnail URL (it would need a signed token). No discovery `<link>` tag yet, since the SPA has no per-page server rendering.
 - **Phase 7** added: maintenance jobs every 15 min (abandoned uploads and their files, leftover `incoming/` files, stale `hls/*.tmp`, SFTP `.status` files older than 30 days, expired refresh tokens, day-old view rows); per-user storage quota (`upload.quotaBytes`, both upload paths, shown in Studio); per-caller rate limits (429 + `Retry-After`); a full Content-Security-Policy; an access log; logging levels via `LOG_LEVEL`/`ACCESS_LOG`; a multi-stage Dockerfile (untested here: no Docker on the dev machine); README with configuration, Entra, SFTP and production notes.
 - **Deferred** (not built): thumbnail sprite + WebVTT scrub previews (needs custom player controls), parallel chunk uploads (needs out-of-order chunk tracking), profile pictures and channel banners, notifications, moderation beyond admins deleting content.
+
+## 16. Production deployment (Kubernetes)
+
+Target: `https://youstream.paulsdavenport3.com`, deployed with Helm to the existing DigitalOcean Kubernetes cluster (3 × 1 vCPU / 2 GB nodes, v1.34). The charts stay cloud-neutral, so the same release can go to EKS or any other cluster; everything provider-specific lives in a per-cluster values file and in `deploy/platform/`.
+
+### Topology
+
+```
+                      ┌──────────────── namespace youstream ───────────────────────────────┐
+ HTTPS :443 ─► LB ─► Envoy Gateway ─► web ×2 (default pool)  ─┐                            │
+ SFTP  :22  ─► LB ─────────────────► sftp ×1 (default pool)  ─┼─► PVC youstream-media (RWX) │
+                                     transcode ×1 (media pool)┘        │                    │
+                                     maintenance CronJob, migrate Job  ▼                    │
+                                     openldap ×1 (StatefulSet)    NFS server (namespace nfs)│
+                      └──────────────────────────────┬─────────────────────────────────────┘
+                                                     ▼
+                                       DO Managed PostgreSQL (database youstream_prod)
+```
+
+| Workload | Kind / replicas | Node pool | Requests → limits | Notes |
+|---|---|---|---|---|
+| `web` | Deployment ×2, RollingUpdate | default | 250m / 640Mi → 1Gi | HTTP API + SPA + media serving; anti-affinity across nodes; PDB `minAvailable: 1` |
+| `sftp` | Deployment ×1, Recreate | default | 100m / 384Mi → 768Mi | MINA SSHD; ingest runs `ffprobe` only |
+| `transcode` | Deployment ×1 | `media` (label + taint `workload=media`) | 3 CPU / 5Gi → 6.5Gi | `media.workers = 1`, one FFmpeg using every core; grace period 60 s, running jobs are released back to the queue |
+| `maintenance` | CronJob `*/15 * * * *`, `concurrencyPolicy: Forbid` | default | 100m / 256Mi | Replaces the in-process timer, so it runs once per cluster instead of once per pod |
+| `migrate` | Job, Helm `pre-install,pre-upgrade` hook | default | 100m / 256Mi | Flyway; a failed migration stops the rollout before any pod changes |
+| `openldap` | StatefulSet ×1, 1 Gi RWO PVC | default | 50m / 64Mi | ClusterIP only; NetworkPolicy allows only `web` and `sftp` |
+
+### Why media stays in the cluster on a shared filesystem
+
+`web` (browser chunk uploads, media serving), `sftp` (inboxes) and `transcode` (FFmpeg output) all read and write the same files, so they need a **ReadWriteMany** volume. DigitalOcean block storage is ReadWriteOnce, so the platform runs an **in-cluster NFS server** (kubernetes-sigs `nfs-server-provisioner` / NFS-Ganesha) backed by a 100 Gi block volume and exposes it as storage class `youstream-rwx`. The chart only asks for "an RWX PVC with storage class X":
+
+| Cluster | `persistence.storageClass` | Backing |
+|---|---|---|
+| DOKS | `youstream-rwx` | in-cluster NFS on `do-block-storage` (expandable) |
+| EKS | `youstream-rwx` (same NFS chart on `gp3`) or `efs-sc` | EBS volume, or Amazon EFS if a managed RWX volume is preferred |
+
+`LocalDiskStorage` keeps working unchanged: the volume is mounted at `/data` in every pod. The NFS server is a single point of failure: if its node dies, the volume reattaches on another node within a minute or two, and uploads or playback fail during that time. That is acceptable for v1 and is the trade-off for portability without Ceph/Longhorn, which don't fit 1 vCPU nodes.
+
+### Phase 8: cluster-ready server (code)
+
+1. **Roles.** `roles = ${?YOUSTREAM_ROLES}`, a list of `web`, `sftp`, `transcode` (default: all three, so local runs are unchanged). Every pod still serves `GET /api/health` on 8080 for probes; non-web pods serve nothing else.
+2. **One-shot commands.** `youstream migrate` (Flyway only, then exit) and `youstream maintenance` (one cleanup pass, then exit). Pods start with `db.migrate = false`.
+3. **Real client IPs.**
+   - HTTP: enable Jooby's trust-proxy mode (config `server.trustProxy`) so `getRemoteAddress()` honours `X-Forwarded-For` from the gateway. Rate limits, the login throttle and anonymous view keys depend on it.
+   - SFTP: optional PROXY protocol v1/v2 (`sftp.proxyProtocol`) through SSHD's `ServerProxyAcceptor`, because a cloud load balancer hides the client address otherwise.
+4. **Login throttle in PostgreSQL** (`V2__login_failures.sql`), shared by all web pods and SFTP, so spreading guesses across replicas doesn't help. The other per-route rate limits stay in memory, so their effective limit is the number of web replicas times the configured limit. The `PublicVideoCache` (30 s TTL) is also per pod; a visibility change reaches every pod within 30 s.
+5. **SFTP host key from a file that may be read-only** (a Kubernetes Secret); generate it if it's missing only when the path is writable. Every cluster gets the same key, so clients don't see host-key warnings after a move.
+6. **Container settings.** `JAVA_OPTS=-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError`. Read-only root filesystem with an `emptyDir` on `/tmp`. Run as UID 10001 with `fsGroup` 10001.
+7. **Configuration.** The chart renders a HOCON file into a ConfigMap mounted as `conf/local.conf`. Secrets come in as environment variables from Kubernetes Secrets (`DB_PASSWORD`, `JWT_SECRET`, `ENTRA_CLIENT_SECRET`, `LDAP_BIND_PASSWORD`). Add `${?ENV}` overrides wherever one is missing.
+
+### Phase 9: cluster platform (`deploy/platform/`, run once per cluster)
+
+| Step | DOKS | EKS equivalent |
+|---|---|---|
+| Media node pool | `doctl kubernetes cluster node-pool create <cluster> --name media --size s-4vcpu-8gb --count 1 --label workload=media --taint workload=media:NoSchedule` | Managed node group (c7i.xlarge or similar) with the same label and taint |
+| Gateway | Gateway API CRDs + Envoy Gateway (Helm, pinned). One `Gateway` with an HTTPS listener for the host; its Service gets a DO load balancer. ingress-nginx is retired (March 2026), so it is not used | Same charts; NLB annotations in values |
+| Certificates | cert-manager (Helm, pinned) with Gateway API support; `ClusterIssuer` for Let's Encrypt (staging first, then production) using HTTP-01 through the Gateway | Same |
+| RWX storage | `nfs-server-provisioner` on a 100 Gi `do-block-storage` PVC → storage class `youstream-rwx`. Verify that the node image can mount NFS (DO documents this setup for DOKS) | Same chart on `gp3`, or the EFS CSI driver |
+| Database | Add the cluster as a trusted source of the managed database. Using `doadmin`, create database `youstream_prod` and role `youstream_prod`, owner of schema `public`. Store the CA certificate in a Secret | RDS or another PostgreSQL 14+ |
+| Entra ID | Add redirect URI `https://youstream.paulsdavenport3.com/api/auth/microsoft/callback`; create a separate production client secret | Same app registration |
+| DNS | `A youstream.paulsdavenport3.com → gateway LB IP`, `A sftp.youstream.paulsdavenport3.com → SFTP LB IP` | Same names, new IPs (or CNAMEs to the AWS LB names) |
+| Secrets | `kubectl create secret` for database, JWT, Entra, LDAP, SFTP host key, GHCR pull secret (only if the repository is private). External Secrets Operator can replace this later | Same |
+
+### Phase 10: Helm charts
+
+- **`deploy/helm/youstream`**:
+  - Templates: Deployments `web`, `sftp`, `transcode`; CronJob `maintenance`; Job `migrate` (a hook); ConfigMap; PVC; Services; `HTTPRoute`; `BackendTrafficPolicy`; NetworkPolicies; ServiceAccount (`automountServiceAccountToken: false`); PDB.
+  - Timeouts: the upload route `/api/uploads/*` gets a 5-minute request timeout, because Envoy's default of 15 s is too short for 16 MB chunks on slow links.
+  - SFTP: `Service` of type `LoadBalancer` maps port 22 to 2222. Its annotations come from values (DO proxy protocol, or AWS NLB), and the result is `sftp alice@sftp.youstream.paulsdavenport3.com`.
+  - Values: `image.repository/tag`, per-role `replicas`/`resources`/`nodeSelector`/`tolerations`, `persistence.storageClass/size`, `publicUrl`, `sftp.publicHost`, `ldap.*`, `entra.*` (non-secret parts), `existingSecret` names, `gateway.parentRef`.
+- **`deploy/helm/openldap`**:
+  - Image: `deploy/openldap/Dockerfile` builds from `debian:trixie-slim` + `slapd` (Debian security updates, no third-party image). Bitnami's OpenLDAP image moved to a paid/legacy catalog in 2025, and `osixia/openldap` is unmaintained.
+  - Bootstrap LDIF: `ou=people`, `ou=groups`, groups `youstream-users`/`youstream-admins`, read-only service account for YouStream; `ppolicy` overlay for password rules.
+  - Users are managed with `deploy/openldap/ldap-user.sh add|passwd|disable` (runs `ldapmodify` through `kubectl exec`).
+  - Nightly `slapcat` backup to the media volume.
+  - Production sign-in: Microsoft for tenant members; OpenLDAP for everyone else. LDAP users can use SFTP passwords; Microsoft users use SSH keys.
+
+### Phase 11: CI/CD and go-live
+
+- **Prerequisite:** push `master` to `origin` (`vgerdev/youstream`).
+- **`.github/workflows/ci.yml`** (pull requests and pushes):
+  - Temurin 25, Node 22 and `apt install ffmpeg`.
+  - A `postgres:16` service container supplies `db.testSchema` through a CI-only conf, so every test runs (none skipped).
+  - Runs `./gradlew build`.
+- **`.github/workflows/deploy.yml`** (push to `master`, after CI):
+  - Build images with Buildx and push `ghcr.io/vgerdev/youstream:<sha>` (plus `:latest`), and `youstream-openldap` when `deploy/openldap/` changed.
+  - Run `helm upgrade --install --atomic --wait --timeout 15m --set image.tag=<sha>` in the GitHub environment `production`, using a kubeconfig secret for a namespace-scoped ServiceAccount, which works the same on DOKS and EKS. Required reviewers on the environment are optional.
+  - Smoke test: `curl -f https://youstream.paulsdavenport3.com/api/health`.
+- **Backups:**
+  - The database uses DO managed daily backups (PITR).
+  - The media volume gets a daily `VolumeSnapshot` (DO CSI snapshots, AWS Backup on EKS) with 7-day retention.
+  - LDAP is covered by the `slapcat` dump on the media volume.
+- **Go-live checklist:**
+  - Let's Encrypt staging certificate, then production.
+  - Microsoft sign-in.
+  - LDAP sign-in.
+  - Browser upload: transcode runs on the media node, then the video plays.
+  - SFTP upload with a password and with an SSH key.
+  - Embed on another site.
+  - Rate limit returns 429 with real client IPs in the access log.
+  - `helm rollback` once.
+
+### Monthly cost added to the existing cluster (DigitalOcean list prices)
+
+| Item | ≈ $/month |
+|---|---|
+| Media node `s-4vcpu-8gb` | 48 |
+| Gateway load balancer | 12 |
+| SFTP load balancer | 12 (saved by putting SFTP on the gateway LB via a `TCPRoute`, which is still experimental in Gateway API) |
+| 100 Gi block volume (NFS) + 1 Gi (LDAP) | 10 |
+| Volume snapshots | ~1–5 |
+| GHCR | 0 |
+| **Total** | **~85** |
+
+### Risks / to verify
+
+- **Capacity of the default pool.** Two web pods, sftp, openldap, Envoy, cert-manager and the NFS server need about 1.2 CPU and 3 GB in requests on 3 × (920m / 1.5 GB) nodes, on top of what already runs there. Moving the default pool to `s-2vcpu-4gb` may be necessary; otherwise sftp, openldap and NFS can tolerate the media taint.
+- NFS ownership and permissions with UID 10001 / `fsGroup`, and atomic renames over NFS. Test both in Phase 9 with a throwaway pod.
+- FFmpeg in the image comes from Ubuntu noble (6.1), not the 9.0.2 used in development. The CI run in Phase 11 covers the media tests against it.
