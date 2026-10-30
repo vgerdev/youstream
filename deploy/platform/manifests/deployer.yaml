@@ -1,0 +1,69 @@
+# The account GitHub Actions deploys with: full control of the workload kinds in namespace ${NAMESPACE} (Helm also
+# keeps its release records there as Secrets), nothing cluster-wide and no RBAC changes. In namespace nfs it may
+# only manage VolumeSnapshots of the media volume (.github/workflows/backup.yml).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-deployer
+  namespace: ${NAMESPACE}
+---
+# long-lived token for the kubeconfig; delete this Secret (and run 70-deployer.sh again) to rotate it
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-deployer-token
+  namespace: ${NAMESPACE}
+  annotations:
+    kubernetes.io/service-account.name: github-deployer
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-deployer
+  namespace: ${NAMESPACE}
+rules:
+  - apiGroups: ["", apps, batch, policy, networking.k8s.io, gateway.networking.k8s.io, autoscaling]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-deployer
+  namespace: ${NAMESPACE}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-deployer
+subjects:
+  - kind: ServiceAccount
+    name: github-deployer
+    namespace: ${NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-deployer-snapshots
+  namespace: nfs
+rules:
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-deployer-snapshots
+  namespace: nfs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-deployer-snapshots
+subjects:
+  - kind: ServiceAccount
+    name: github-deployer
+    namespace: ${NAMESPACE}

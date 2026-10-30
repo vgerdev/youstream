@@ -1,0 +1,64 @@
+name: Media snapshot
+
+# Daily CSI snapshot of the NFS server's block volume (all media and the OpenLDAP backups), kept for 7 days.
+# The database has DigitalOcean's own daily backups. Restore: deploy/README.md.
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: media-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    env:
+      NAMESPACE: nfs
+      CLAIM: data-nfs-nfs-server-provisioner-0
+      SNAPSHOT_CLASS: ${{ vars.SNAPSHOT_CLASS || 'do-block-storage' }}
+      KEEP_DAYS: "7"
+    steps:
+      - uses: azure/setup-kubectl@v4
+      - name: Cluster access
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          umask 077
+          echo "$KUBECONFIG_B64" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+      - name: Take a snapshot
+        run: |
+          name="media-$(date -u +%Y%m%d-%H%M)"
+          kubectl apply -f - <<EOF
+          apiVersion: snapshot.storage.k8s.io/v1
+          kind: VolumeSnapshot
+          metadata:
+            name: $name
+            namespace: $NAMESPACE
+            labels:
+              app.kubernetes.io/part-of: youstream-backup
+          spec:
+            volumeSnapshotClassName: $SNAPSHOT_CLASS
+            source:
+              persistentVolumeClaimName: $CLAIM
+          EOF
+          kubectl -n "$NAMESPACE" wait "volumesnapshot/$name" --for=jsonpath='{.status.readyToUse}'=true --timeout=20m
+          kubectl -n "$NAMESPACE" get volumesnapshot "$name"
+      - name: Remove snapshots older than ${{ env.KEEP_DAYS }} days
+        run: |
+          cutoff=$(date -u -d "-$KEEP_DAYS days" +%s)
+          kubectl -n "$NAMESPACE" get volumesnapshot -l app.kubernetes.io/part-of=youstream-backup \
+            -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.creationTimestamp}{"\n"}{end}' |
+          while read -r name created; do
+            if [ "$(date -u -d "$created" +%s)" -lt "$cutoff" ]; then
+              kubectl -n "$NAMESPACE" delete volumesnapshot "$name"
+            fi
+          done
+          kubectl -n "$NAMESPACE" get volumesnapshot -l app.kubernetes.io/part-of=youstream-backup

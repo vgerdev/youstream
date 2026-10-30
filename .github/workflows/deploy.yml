@@ -1,0 +1,142 @@
+name: Deploy
+
+# After CI succeeds on master (or by hand): build and push the images, then helm upgrade the production cluster.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  APP_IMAGE: ghcr.io/${{ github.repository_owner }}/youstream
+  LDAP_IMAGE: ghcr.io/${{ github.repository_owner }}/youstream-openldap
+
+jobs:
+  images:
+    name: Images
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha: ${{ steps.tags.outputs.sha }}
+      ldap: ${{ steps.tags.outputs.ldap }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # workflow_run starts on the default branch's latest commit; deploy exactly what CI tested
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - id: tags
+        name: Tags
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # the OpenLDAP image only changes when deploy/openldap does
+          echo "ldap=$(git ls-files -s deploy/openldap | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: YouStream image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.APP_IMAGE }}:${{ steps.tags.outputs.sha }}
+            ${{ env.APP_IMAGE }}:latest
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
+      - name: Is the OpenLDAP image built already?
+        id: ldap
+        run: |
+          if docker buildx imagetools inspect "$LDAP_IMAGE:${{ steps.tags.outputs.ldap }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: OpenLDAP image
+        if: steps.ldap.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/openldap
+          push: true
+          tags: ${{ env.LDAP_IMAGE }}:${{ steps.tags.outputs.ldap }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+  deploy:
+    name: Helm upgrade
+    needs: images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # secrets KUBECONFIG_B64 and variables ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_ENABLED, GHCR_PULL_SECRET, PUBLIC_URL
+    environment:
+      name: production
+      url: ${{ vars.PUBLIC_URL || 'https://youstream.paulsdavenport3.com' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.images.outputs.sha }}
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Cluster access
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          [ -n "$KUBECONFIG_B64" ] || { echo "::error::secret KUBECONFIG_B64 is missing (deploy/platform/70-deployer.sh)"; exit 1; }
+          umask 077
+          echo "$KUBECONFIG_B64" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+      - name: youstream
+        env:
+          ENTRA_ENABLED: ${{ vars.ENTRA_ENABLED || 'true' }}
+          ENTRA_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
+          ENTRA_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
+          PULL_SECRET: ${{ vars.GHCR_PULL_SECRET == 'true' && 'ghcr-pull' || '' }}
+        run: |
+          args=(--set image.tag="${{ needs.images.outputs.sha }}" --set image.repository="$APP_IMAGE"
+                --set entra.enabled="$ENTRA_ENABLED")
+          if [ "$ENTRA_ENABLED" = true ]; then
+            args+=(--set entra.tenantId="$ENTRA_TENANT_ID" --set entra.clientId="$ENTRA_CLIENT_ID")
+          fi
+          [ -n "$PULL_SECRET" ] && args+=(--set "imagePullSecrets[0].name=$PULL_SECRET")
+          helm upgrade --install youstream deploy/helm/youstream --namespace youstream \
+            -f deploy/helm/values/youstream-doks.yaml "${args[@]}" \
+            --atomic --wait --timeout 15m
+      - name: openldap
+        env:
+          PULL_SECRET: ${{ vars.GHCR_PULL_SECRET == 'true' && 'ghcr-pull' || '' }}
+        run: |
+          args=(--set image.tag="${{ needs.images.outputs.ldap }}" --set image.repository="$LDAP_IMAGE")
+          [ -n "$PULL_SECRET" ] && args+=(--set "imagePullSecrets[0].name=$PULL_SECRET")
+          helm upgrade --install openldap deploy/helm/openldap --namespace youstream \
+            -f deploy/helm/values/openldap-doks.yaml "${args[@]}" \
+            --atomic --wait --timeout 5m
+      - name: Smoke test
+        env:
+          PUBLIC_URL: ${{ vars.PUBLIC_URL || 'https://youstream.paulsdavenport3.com' }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "$PUBLIC_URL/api/health"; then echo; exit 0; fi
+            sleep 10
+          done
+          echo "::error::$PUBLIC_URL/api/health did not answer"
+          exit 1
+      - name: Release status
+        if: always()
+        run: |
+          helm -n youstream status youstream | head -20 || true
+          helm -n youstream history youstream --max 5 || true

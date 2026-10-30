@@ -357,7 +357,7 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 | **8. Cluster-ready server** ✅ | Process roles (`web`, `sftp`, `transcode`) per pod; `migrate` and `maintenance` one-shot commands; proxy-aware client IPs (HTTP `X-Forwarded-For`, SFTP PROXY protocol); login throttle shared through PostgreSQL; SFTP host key loaded from a mounted secret; container JVM flags. See §16 | All tests pass; three local processes with different roles share one `data/` folder and the upload → transcode → watch flow works across them |
 | **9. Cluster platform** 🛠 scripts written, not yet run | Media node pool, Gateway API + Envoy Gateway, cert-manager + Let's Encrypt, in-cluster NFS (RWX storage class), production database and role, Entra redirect URI, DNS. Scripted in `deploy/platform/` | `https://youstream.paulsdavenport3.com` answers with a valid certificate (from a placeholder backend); an RWX test PVC mounts on two nodes |
 | **10. Helm charts** 🛠 written, not yet deployed | `deploy/helm/youstream` (web, sftp, transcode, migrate hook, maintenance CronJob, Gateway route, RWX PVC, network policies) and `deploy/helm/openldap` (Debian `slapd` image). Values per cluster in `deploy/helm/values/` | `helm install` from a laptop brings the site up; LDAP + Microsoft sign-in, browser upload, SFTP upload and playback work in production |
-| **11. CI/CD & go-live** | GitHub Actions: build + all tests (Postgres service container, FFmpeg), images to GHCR, `helm upgrade --atomic` to a `production` environment; smoke test; backups; runbook | A push to `master` deploys itself; rollback with `helm rollback` is documented and tried once |
+| **11. CI/CD & go-live** 🛠 workflows written, go-live pending | GitHub Actions: build + all tests (Postgres service container, FFmpeg), images to GHCR, `helm upgrade --atomic` to a `production` environment; smoke test; backups; runbook | A push to `master` deploys itself; rollback with `helm rollback` is documented and tried once |
 
 ## 14. Assumptions to confirm
 
@@ -404,6 +404,13 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
   - **Backups:** a sidecar runs `slapcat` daily to `backups/openldap` on the media volume and keeps 14 days.
   - **Checks:** `helm lint` passes for both charts. The rendered DOKS and EKS output and the Phase 9 platform manifests (44 resources) pass `kubeconform -strict` against Kubernetes 1.34 and the Gateway API, Envoy Gateway and cert-manager CRD schemas.
   - **Not yet run:** the OpenLDAP image. There is no Docker on the development machine, so Phase 11's CI builds it and runs a smoke test.
+- **Phase 11** wrote `.github/workflows/` and `deploy/README.md`:
+  - **`ci.yml`:** runs the Gradle build with a PostgreSQL 17 service container and Ubuntu's FFmpeg, and fails if any JUnit test was skipped.
+  - **OpenLDAP check in CI:** a second job builds the image. It runs `ldap-user.sh` through a `kubectl` shim that forwards to `docker exec`, then checks four things: `memberOf`, hashed passwords, anonymous binds refused, and service-password rotation on restart. Finally it starts the server against the directory: the LDAP sign-in returns 200, a wrong password 401, and a disabled user is refused.
+  - **`deploy.yml`:** runs after a green CI on `master` and builds the commit that CI tested (`head_sha`). It pushes `youstream:<sha>` and `youstream-openldap:<hash of deploy/openldap>` (the second only when missing), runs `helm upgrade --atomic` for both releases in the `production` environment, then checks `/api/health` through the public URL.
+  - **`backup.yml`:** a daily VolumeSnapshot of the NFS server's volume, kept for 7 days.
+  - **Deploy account:** `deploy/platform/70-deployer.sh` creates the ServiceAccount, with full rights only in namespace `youstream` (no RBAC rights there) and snapshot rights only in `nfs`. It writes its kubeconfig and checks that the account cannot create ClusterRoleBindings.
+  - **Checks:** `actionlint` and `kubeconform` pass, and the script ran against stub `kubectl`. None of the workflows has run on GitHub yet.
 - **Transcode recovery in Kubernetes**: a restarted container keeps its pod name, so its jobs are requeued at start; a job of a deleted pod is requeued by the stale check after `media.staleJobAfter` (6 h).
 - **Deferred** (not built): thumbnail sprite + WebVTT scrub previews (needs custom player controls), parallel chunk uploads (needs out-of-order chunk tracking), profile pictures and channel banners, notifications, moderation beyond admins deleting content.
 

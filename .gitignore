@@ -22,3 +22,4 @@ conf/local.conf
 
 # Per-cluster platform settings
 deploy/platform/cluster*.env
+*.kubeconfig

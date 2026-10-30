@@ -13,6 +13,7 @@ The design is in [PLAN.md §16](../../PLAN.md).
 | `40-storage.sh` | NFS server (namespace `nfs`, on the media node) and storage class `youstream-rwx`, then a two-pod check | – |
 | `50-database.sh` | trusted source, secrets `youstream-db-ca` and `youstream-db`, database and role `youstream_prod` | type the `doadmin` password |
 | `60-secrets.sh` | secrets `youstream-jwt`, `youstream-entra`, `youstream-ldap`, `youstream-sftp-hostkey`, optionally `ghcr-pull` | type the Entra client secret |
+| `70-deployer.sh` | ServiceAccount `github-deployer` (namespace `youstream` only, plus snapshots in `nfs`) and `github-deployer.kubeconfig` for GitHub Actions | store it as the `KUBECONFIG_B64` environment secret |
 
 ## Before you start
 
@@ -58,6 +59,7 @@ Once the staging certificate is `Ready`, set `ACME_ISSUER=letsencrypt-production
 ./40-storage.sh         # NFS server + check: prints "OK pod-0 on <node> ..." for both pods
 ./50-database.sh        # asks for the doadmin password
 ./60-secrets.sh         # asks for the Entra client secret
+./70-deployer.sh        # kubeconfig for GitHub Actions, see deploy/README.md
 ```
 
 **Database firewall.** If the managed database has no trusted sources yet, it accepts connections from
