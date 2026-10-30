@@ -41,7 +41,10 @@ public class YouStreamApp extends Jooby {
         install(new Jackson3Module());
 
         error(this::handleError);
-        // before any route: access log and security headers apply to everything served
+        // before any route: the real client address, then access log and security headers for everything served
+        if (services.getTrustedProxyHops() > 0) {
+            use(ClientAddress.filter(services.getTrustedProxyHops()));
+        }
         use(new AccessLogHandler(ctx -> {
             AccessClaims user = ctx.getUser();
             return user == null ? "-" : "u" + user.getUserId();

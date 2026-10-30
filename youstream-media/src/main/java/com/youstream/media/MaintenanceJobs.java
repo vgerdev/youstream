@@ -3,6 +3,7 @@ package com.youstream.media;
 import com.youstream.common.model.UploadSession;
 import com.youstream.common.storage.StorageService;
 import com.youstream.db.Db;
+import com.youstream.db.repo.LoginFailureRepository;
 import com.youstream.db.repo.RefreshTokenRepository;
 import com.youstream.db.repo.SocialRepository;
 import com.youstream.db.repo.UploadSessionRepository;
@@ -28,7 +29,8 @@ import java.util.stream.Stream;
 
 /**
  * Periodic housekeeping: expired upload sessions and their partial files, leftover files in {@code incoming/},
- * stale transcode temp folders, old SFTP status files, expired refresh tokens and day-old view dedup rows.
+ * stale transcode temp folders, old SFTP status files, expired refresh tokens, day-old view dedup rows and old
+ * login failures.
  */
 public class MaintenanceJobs implements AutoCloseable {
 
@@ -42,6 +44,7 @@ public class MaintenanceJobs implements AutoCloseable {
         int statusFiles;
         int refreshTokens;
         int viewRows;
+        int loginFailures;
     }
 
     private static final Logger log = LoggerFactory.getLogger(MaintenanceJobs.class);
@@ -51,12 +54,15 @@ public class MaintenanceJobs implements AutoCloseable {
     private static final Duration TEMP_MAX_AGE = Duration.ofHours(24);
     private static final Duration STATUS_MAX_AGE = Duration.ofDays(30);
     private static final Duration TOKEN_GRACE = Duration.ofDays(7);
+    /** Far longer than the login throttle window. */
+    private static final Duration LOGIN_FAILURE_MAX_AGE = Duration.ofDays(1);
 
     private final StorageService storage;
     private final Clock clock;
     private final UploadSessionRepository uploads;
     private final RefreshTokenRepository tokens;
     private final SocialRepository social;
+    private final LoginFailureRepository loginFailures;
     private ScheduledExecutorService scheduler;
 
     public MaintenanceJobs(Db db, StorageService storage, Clock clock) {
@@ -65,6 +71,7 @@ public class MaintenanceJobs implements AutoCloseable {
         this.uploads = new UploadSessionRepository(db);
         this.tokens = new RefreshTokenRepository(db);
         this.social = new SocialRepository(db);
+        this.loginFailures = new LoginFailureRepository(db);
     }
 
     public void start(Duration every) {
@@ -90,6 +97,7 @@ public class MaintenanceJobs implements AutoCloseable {
                 p -> p.getFileName().toString().endsWith(".status"), true))
             .refreshTokens(tokens.deleteExpired(now.minus(TOKEN_GRACE)))
             .viewRows(social.deleteViewsBefore(LocalDate.ofInstant(now, ZoneOffset.UTC).minusDays(1)))
+            .loginFailures(loginFailures.deleteBefore(now.minus(LOGIN_FAILURE_MAX_AGE)))
             .build();
     }
 

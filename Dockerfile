@@ -5,6 +5,7 @@
 #     -v ./conf/local.conf:/opt/youstream/conf/local.conf:ro youstream
 #
 # Media, the SFTP inboxes and the SSH host key live in /data (keep it on a volume).
+# Commands: serve (default), migrate, maintenance, hostkey. YOUSTREAM_ROLES=web|sftp|transcode splits the roles.
 # Not built/tested on the development machine (no Docker there).
 
 FROM node:22-bookworm-slim AS node
@@ -24,7 +25,10 @@ RUN apt-get update \
     && mkdir -p /data && chown youstream /data
 COPY --from=build /src/youstream-server/build/install/youstream /opt/youstream
 WORKDIR /opt/youstream
-ENV STORAGE_ROOT=/data
+# heap sized from the container memory limit, leaving room for metaspace, threads and buffers;
+# exit on OOM so the orchestrator restarts a clean process
+ENV STORAGE_ROOT=/data \
+    JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError"
 VOLUME /data
 EXPOSE 8080 2222
 USER youstream

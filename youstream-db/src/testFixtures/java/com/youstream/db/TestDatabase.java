@@ -36,7 +36,8 @@ public final class TestDatabase {
     public static void truncate() {
         db().run(s -> s
             .sql("TRUNCATE users, user_identities, refresh_tokens, ssh_keys, videos, video_renditions, transcode_jobs,"
-                + " upload_sessions, comments, video_reactions, subscriptions, playlists, playlist_items, video_views"
+                + " upload_sessions, comments, video_reactions, subscriptions, playlists, playlist_items, video_views,"
+                + " login_failures"
                 + " RESTART IDENTITY CASCADE")
             .execute());
     }

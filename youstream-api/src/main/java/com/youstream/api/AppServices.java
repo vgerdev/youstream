@@ -55,6 +55,10 @@ public class AppServices {
     @Builder.Default
     String publicUrl = "http://localhost:8080";
 
+    /** Reverse proxies in front of the server whose {@code X-Forwarded-For} entries are trusted; 0 = none. */
+    @Builder.Default
+    int trustedProxyHops = 0;
+
     @Builder.Default
     long maxUploadBytes = 10L << 30;
     @Builder.Default

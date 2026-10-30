@@ -78,7 +78,7 @@ export default function SftpSection() {
 
           <div class="space-y-2">
             <p class="text-sm font-medium">From a terminal</p>
-            <CopyLine text={`sftp -P ${sftp().port} ${sftp().username}@${sftp().host}`} />
+            <CopyLine text={`sftp ${sftp().port === 22 ? '' : `-P ${sftp().port} `}${sftp().username}@${sftp().host}`} />
             <CopyLine text="put my-video.mp4" />
             <p class="text-xs text-neutral-500">
               Check the host key fingerprint above when your client asks for the first time. After each upload a{' '}

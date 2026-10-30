@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.KeyPair;
 import java.time.Duration;
 import java.util.List;
@@ -35,16 +36,15 @@ public class YouStreamSftpServer implements AutoCloseable {
     private final SshServer sshd;
     private final UploadWatcher watcher;
     private final SimpleGeneratorHostKeyProvider hostKeys;
+    private final Path hostKeyPath;
 
     /**
      * @param ldap null to allow SSH-key login only
      */
     public YouStreamSftpServer(SftpConfig config, StorageService storage, IngestService ingest, UserService users,
                                SshKeyService keys, LdapAuthenticator ldap, LoginThrottle throttle) throws IOException {
-        Files.createDirectories(config.getHostKey().toAbsolutePath().getParent());
-        hostKeys = new SimpleGeneratorHostKeyProvider(config.getHostKey());
-        hostKeys.setAlgorithm(KeyUtils.EC_ALGORITHM);
-        hostKeys.setKeySize(256);
+        hostKeyPath = config.getHostKey();
+        hostKeys = hostKeyProvider(hostKeyPath);
 
         watcher = new UploadWatcher(storage, ingest, config);
         SftpSubsystemFactory sftp = new SftpSubsystemFactory();
@@ -55,6 +55,9 @@ public class YouStreamSftpServer implements AutoCloseable {
         sshd.setHost(config.getHost());
         sshd.setPort(config.getPort());
         sshd.setKeyPairProvider(hostKeys);
+        if (config.isProxyProtocol()) {
+            sshd.setServerProxyAcceptor(new ProxyProtocolAcceptor());
+        }
         sshd.setPasswordAuthenticator(ldap == null ? null : SftpAuthenticators.password(ldap, users, throttle));
         sshd.setPublickeyAuthenticator(SftpAuthenticators.publicKey(keys, users));
         sshd.setKeyboardInteractiveAuthenticator(null);
@@ -79,6 +82,13 @@ public class YouStreamSftpServer implements AutoCloseable {
     }
 
     public void start() throws IOException {
+        // generate a missing key before listening; a read-only location must already hold one
+        if (!Files.isRegularFile(hostKeyPath)) {
+            Files.createDirectories(hostKeyPath.toAbsolutePath().getParent());
+        }
+        if (hostKeyFingerprint() == null) {
+            throw new IOException("SFTP host key " + hostKeyPath + " is missing and cannot be created");
+        }
         sshd.start();
         log.info("SFTP server listening on port {} (host key {})", port(), hostKeyFingerprint());
     }
@@ -90,8 +100,37 @@ public class YouStreamSftpServer implements AutoCloseable {
 
     /** {@code SHA256:...} fingerprint of the host key, shown to users so they can verify the first connection. */
     public String hostKeyFingerprint() {
+        return fingerprint(hostKeys);
+    }
+
+    /**
+     * Fingerprint of an existing host key file, for processes that show SFTP instructions without running the
+     * server; null when the file does not exist (yet).
+     */
+    public static String hostKeyFingerprint(Path hostKey) {
+        return Files.isRegularFile(hostKey) ? fingerprint(hostKeyProvider(hostKey)) : null;
+    }
+
+    /** Creates the host key file if it does not exist yet; returns its fingerprint. */
+    public static String generateHostKey(Path hostKey) throws IOException {
+        Files.createDirectories(hostKey.toAbsolutePath().getParent());
+        String fingerprint = fingerprint(hostKeyProvider(hostKey));
+        if (fingerprint == null) {
+            throw new IOException("cannot create host key " + hostKey);
+        }
+        return fingerprint;
+    }
+
+    private static SimpleGeneratorHostKeyProvider hostKeyProvider(Path hostKey) {
+        SimpleGeneratorHostKeyProvider provider = new SimpleGeneratorHostKeyProvider(hostKey);
+        provider.setAlgorithm(KeyUtils.EC_ALGORITHM);
+        provider.setKeySize(256);
+        return provider;
+    }
+
+    private static String fingerprint(SimpleGeneratorHostKeyProvider provider) {
         try {
-            for (KeyPair kp : hostKeys.loadKeys(null)) {
+            for (KeyPair kp : provider.loadKeys(null)) {
                 return KeyUtils.getFingerPrint(kp.getPublic());
             }
         } catch (Exception e) {
