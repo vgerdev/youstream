@@ -19,3 +19,6 @@ youstream-web/.gradle/
 data/
 conf/local.conf
 *.log
+
+# Per-cluster platform settings
+deploy/platform/cluster*.env

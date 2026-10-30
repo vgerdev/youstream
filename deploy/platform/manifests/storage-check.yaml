@@ -1,0 +1,80 @@
+# Throwaway check of youstream-rwx with the app's user (UID/GID 10001): two pods, preferably on different nodes,
+# each write a file through a temp-file rename (how the app stores uploads), then wait to see the other's file.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-check
+  namespace: ${NAMESPACE}
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: youstream-rwx
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: storage-check
+  namespace: ${NAMESPACE}
+spec:
+  completions: 2
+  parallelism: 2
+  completionMode: Indexed
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: storage-check
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: storage-check
+      containers:
+        - name: check
+          image: busybox:1.37
+          env:
+            - name: NODE
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          command:
+            - sh
+            - -ec
+            - |
+              me="pod-$JOB_COMPLETION_INDEX"
+              mkdir -p /data/check/sub
+              echo "$NODE" > "/data/check/.$me.tmp"
+              mv "/data/check/.$me.tmp" "/data/check/$me"
+              for i in $(seq 1 60); do
+                [ -f /data/check/pod-0 ] && [ -f /data/check/pod-1 ] && break
+                sleep 2
+              done
+              [ -f /data/check/pod-0 ] && [ -f /data/check/pod-1 ] || { echo "FAIL: other pod's file not visible"; exit 1; }
+              owner=$(stat -c %u:%g "/data/check/$me")
+              [ "$owner" = 10001:10001 ] || { echo "FAIL: owner $owner"; exit 1; }
+              echo "OK $me on $NODE: pod-0 wrote on $(cat /data/check/pod-0), pod-1 on $(cat /data/check/pod-1), owner $owner"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: storage-check

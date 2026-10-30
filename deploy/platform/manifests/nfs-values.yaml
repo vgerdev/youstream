@@ -1,0 +1,31 @@
+# In-cluster NFS server (NFS-Ganesha) on one ReadWriteOnce volume, exposed as the ReadWriteMany storage class
+# youstream-rwx. It runs on the media node: transcode is its heaviest client, and the default pool is small.
+# The backing volume is ${NFS_SIZE} of ${NFS_BACKING_CLASS}; grow it by editing the PVC data-nfs-nfs-server-provisioner-0.
+persistence:
+  enabled: true
+  storageClass: ${NFS_BACKING_CLASS}
+  size: ${NFS_SIZE}
+storageClass:
+  name: youstream-rwx
+  defaultClass: false
+  allowVolumeExpansion: true
+  # deleting a claim keeps its files on the NFS volume
+  reclaimPolicy: Retain
+  mountOptions:
+    - vers=4.1
+    - hard
+    - timeo=600
+    - retrans=2
+nodeSelector:
+  workload: media
+tolerations:
+  - key: workload
+    operator: Equal
+    value: media
+    effect: NoSchedule
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi

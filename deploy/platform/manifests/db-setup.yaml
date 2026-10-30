@@ -1,0 +1,50 @@
+# Run-once psql pod for database.sql. Connecting from inside the cluster also proves the database's trusted
+# sources admit the cluster, and verify-full proves the CA certificate in youstream-db-ca matches the server.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-setup
+  namespace: ${NAMESPACE}
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 70
+  containers:
+    - name: psql
+      image: ${POSTGRES_CLIENT_IMAGE}
+      env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: youstream-db-admin
+              key: password
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: youstream-db
+              key: DB_PASSWORD
+      command:
+        - sh
+        - -ec
+        - >
+          psql "host=${DB_HOST} port=${DB_PORT} dbname=${DB_ADMIN_DATABASE} user=${DB_ADMIN_USER}
+          sslmode=verify-full sslrootcert=/ca/ca.crt"
+          -v db_name=${DB_NAME} -v db_user=${DB_USER} -v db_password="$DB_PASSWORD"
+          -f /sql/database.sql
+      volumeMounts:
+        - name: sql
+          mountPath: /sql
+        - name: ca
+          mountPath: /ca
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+  volumes:
+    - name: sql
+      configMap:
+        name: db-setup
+    - name: ca
+      secret:
+        secretName: youstream-db-ca

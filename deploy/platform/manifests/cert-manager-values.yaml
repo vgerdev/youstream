@@ -1,0 +1,24 @@
+# cert-manager with Gateway API support: certificates for Gateway listeners from the cert-manager.io/cluster-issuer
+# annotation, HTTP-01 challenges served through HTTPRoutes. Small requests, because the default pool has 1 vCPU nodes.
+crds:
+  enabled: true
+  keep: true
+config:
+  apiVersion: controller.config.cert-manager.io/v1alpha1
+  kind: ControllerConfiguration
+  gatewayAPI:
+    enabled: true
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+webhook:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+cainjector:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi

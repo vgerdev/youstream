@@ -1,0 +1,26 @@
+# Envoy for the Gateway on DigitalOcean. A network load balancer (the DOKS default since 1.33) keeps the client
+# source IP without SNAT, and externalTrafficPolicy Local stops kube-proxy from replacing it, so Envoy sees real
+# client addresses and appends them to X-Forwarded-For (the app trusts 1 hop). DO network load balancers do not
+# support PROXY protocol and do not need it.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: public
+  namespace: gateway
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 1
+        container:
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      envoyService:
+        externalTrafficPolicy: Local
+        annotations:
+          service.beta.kubernetes.io/do-loadbalancer-name: gateway-public

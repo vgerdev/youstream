@@ -1,0 +1,63 @@
+# The shared public Gateway (namespace gateway). Port 80 serves ACME challenges and redirects to HTTPS;
+# port 443 terminates TLS for ${DOMAIN} with a certificate cert-manager keeps in secret youstream-tls.
+# Application routes (HTTPRoutes from the Helm chart) attach to listener https-youstream from namespace ${NAMESPACE}.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: gateway
+spec:
+  gatewayClassName: envoy
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: public
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https-youstream
+      protocol: HTTPS
+      port: 443
+      hostname: ${DOMAIN}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: youstream-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              kubernetes.io/metadata.name: ${NAMESPACE}
+---
+# http -> https. The hostname puts this route in the same virtual host as cert-manager's challenge routes,
+# whose exact-path matches take precedence over this prefix match.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: gateway
+spec:
+  parentRefs:
+    - name: public
+      sectionName: http
+  hostnames:
+    - ${DOMAIN}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
