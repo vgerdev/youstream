@@ -20,6 +20,8 @@ kube+=(-n "$NAMESPACE")
 
 die() { echo "error: $*" >&2; exit 1; }
 in_pod() { "${kube[@]}" exec -i "$POD" -c openldap -- "$@"; }
+# exec -i reads this script's stdin, so commands without input must not see it (it may hold piped passwords)
+in_pod_no_input() { in_pod "$@" </dev/null; }
 modify() { in_pod sh -c 'ldapmodify -Q -Y EXTERNAL -H "$LDAPI_URL" "$@"' ldapmodify "$@"; }
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
@@ -29,14 +31,16 @@ check_uid() {
 
 read_password() {
     local p1 p2
-    read -r -s -p "Password for $1 (12+ characters): " p1; echo >&2
-    read -r -s -p "Repeat: " p2; echo >&2
+    read -r -s -p "Password for $1 (12+ characters): " p1 || die "no password given"
+    echo >&2
+    read -r -s -p "Repeat: " p2 || die "password not repeated"
+    echo >&2
     [ "$p1" = "$p2" ] || die "passwords differ"
     [ "${#p1}" -ge 12 ] || die "password shorter than 12 characters"
     password=$p1
 }
 
-base=$(in_pod printenv LDAP_BASE_DN) || die "cannot reach $POD in namespace $NAMESPACE"
+base=$(in_pod_no_input printenv LDAP_BASE_DN) || die "cannot reach $POD in namespace $NAMESPACE"
 people="ou=people,$base"
 users_group="cn=youstream-users,ou=groups,$base"
 admins_group="cn=youstream-admins,ou=groups,$base"
@@ -140,7 +144,7 @@ LDIF
         echo "deleted $1"
         ;;
     list)
-        in_pod sh -c 'ldapsearch -LLL -Q -Y EXTERNAL -H "$LDAPI_URL" -b "$1" "(objectClass=inetOrgPerson)" \
+        in_pod_no_input sh -c 'ldapsearch -LLL -Q -Y EXTERNAL -H "$LDAPI_URL" -b "$1" "(objectClass=inetOrgPerson)" \
             uid cn mail memberOf pwdAccountLockedTime' ldapsearch "$people"
         ;;
     *)
