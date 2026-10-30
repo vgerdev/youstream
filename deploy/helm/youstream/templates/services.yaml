@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "youstream.fullname" . }}-web
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "youstream.selectorLabels" (dict "root" . "role" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- if .Values.sftp.enabled }}
+---
+# SFTP gets its own load balancer: port 22 for users, 2222 in the pod
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "youstream.fullname" . }}-sftp
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sftp
+  {{- with .Values.sftp.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.sftp.service.type }}
+  {{- if eq .Values.sftp.service.type "LoadBalancer" }}
+  externalTrafficPolicy: {{ .Values.sftp.service.externalTrafficPolicy }}
+  {{- with .Values.sftp.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  selector:
+    {{- include "youstream.selectorLabels" (dict "root" . "role" "sftp") | nindent 4 }}
+  ports:
+    - name: sftp
+      port: {{ .Values.sftp.service.port }}
+      targetPort: sftp
+{{- end }}

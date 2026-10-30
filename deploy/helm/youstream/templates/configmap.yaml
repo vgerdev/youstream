@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "youstream.fullname" . }}
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+data:
+  # mounted as conf/local.conf; most settings arrive as environment variables (see _helpers.tpl)
+  local.conf: |
+    # rendered by the youstream Helm chart (extraConfig)
+    {{- with .Values.extraConfig }}
+    {{- . | nindent 4 }}
+    {{- end }}

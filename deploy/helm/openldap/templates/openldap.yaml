@@ -1,0 +1,174 @@
+{{- $tag := required "image.tag is required" .Values.image.tag -}}
+{{- $labels := dict "app.kubernetes.io/name" "openldap" "app.kubernetes.io/instance" .Release.Name -}}
+apiVersion: v1
+kind: Service
+metadata:
+  # a fixed name: YouStream's ldap.url points at ldap://openldap:389
+  name: openldap
+  labels:
+    {{- toYaml $labels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- toYaml $labels | nindent 4 }}
+  ports:
+    - name: ldap
+      port: 389
+      targetPort: ldap
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: openldap
+  labels:
+    {{- toYaml $labels | nindent 4 }}
+spec:
+  serviceName: openldap
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- toYaml $labels | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- toYaml $labels | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10002
+        runAsGroup: 10002
+        fsGroup: 10002
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: openldap
+          image: {{ printf "%s:%s" .Values.image.repository $tag | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: LDAP_BASE_DN
+              value: {{ .Values.baseDn | quote }}
+            - name: LDAP_BIND_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.bindPasswordSecret.name }}
+                  key: {{ .Values.bindPasswordSecret.key }}
+          ports:
+            - name: ldap
+              containerPort: 1389
+          readinessProbe:
+            tcpSocket:
+              port: ldap
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: ldap
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/openldap
+            - name: tmp
+              mountPath: /tmp
+        {{- if .Values.backup.enabled }}
+        # slapcat is safe while slapd runs (MDB); one LDIF pair per day on the shared volume
+        - name: backup
+          image: {{ printf "%s:%s" .Values.image.repository $tag | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          command:
+            - sh
+            - -c
+            - |
+              dir="/backup/{{ .Values.backup.path }}"
+              while true; do
+                if [ -d /var/lib/openldap/slapd.d/cn=config ]; then
+                  mkdir -p "$dir"
+                  day=$(date +%F)
+                  slapcat -F /var/lib/openldap/slapd.d -n 0 -l "$dir/$day-config.ldif" \
+                    && slapcat -F /var/lib/openldap/slapd.d -n 1 -l "$dir/$day-data.ldif" \
+                    && echo "backup $day written" || echo "backup $day FAILED"
+                  find "$dir" -name '*.ldif' -mtime +{{ .Values.backup.keepDays }} -delete
+                fi
+                sleep 86400
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            # writable: LMDB readers register in the lock file
+            - name: state
+              mountPath: /var/lib/openldap
+            - name: backup
+              mountPath: /backup
+            - name: tmp
+              mountPath: /tmp
+        {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.backup.enabled }}
+        - name: backup
+          persistentVolumeClaim:
+            claimName: {{ .Values.backup.existingClaim }}
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+---
+# only YouStream's web and sftp pods reach the directory
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openldap
+  labels:
+    {{- toYaml $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $labels | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range .Values.allowedClients }}
+        - podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+        {{- end }}
+      ports:
+        - port: 1389

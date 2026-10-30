@@ -1,0 +1,58 @@
+# Initial directory tree, loaded once with slapadd. Placeholders: @BASE_DN@, @DC@ (first dc= value).
+# groupOfNames needs a member, so both groups start with the service account, which cannot sign in to YouStream
+# (it is not an inetOrgPerson).
+
+dn: @BASE_DN@
+objectClass: dcObject
+objectClass: organization
+dc: @DC@
+o: YouStream
+
+dn: ou=people,@BASE_DN@
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,@BASE_DN@
+objectClass: organizationalUnit
+ou: groups
+
+dn: ou=system,@BASE_DN@
+objectClass: organizationalUnit
+ou: system
+
+dn: ou=policies,@BASE_DN@
+objectClass: organizationalUnit
+ou: policies
+
+dn: cn=youstream,ou=system,@BASE_DN@
+objectClass: applicationProcess
+objectClass: simpleSecurityObject
+cn: youstream
+description: YouStream read-only service account
+userPassword: {SSHA}set-at-start
+
+dn: cn=default,ou=policies,@BASE_DN@
+objectClass: organizationalRole
+objectClass: pwdPolicy
+cn: default
+pwdAttribute: userPassword
+pwdMinLength: 12
+pwdCheckQuality: 1
+pwdMaxFailure: 10
+pwdFailureCountInterval: 900
+pwdLockout: TRUE
+pwdLockoutDuration: 900
+pwdMustChange: FALSE
+pwdAllowUserChange: TRUE
+
+dn: cn=youstream-users,ou=groups,@BASE_DN@
+objectClass: groupOfNames
+cn: youstream-users
+description: may sign in to YouStream
+member: cn=youstream,ou=system,@BASE_DN@
+
+dn: cn=youstream-admins,ou=groups,@BASE_DN@
+objectClass: groupOfNames
+cn: youstream-admins
+description: YouStream administrators
+member: cn=youstream,ou=system,@BASE_DN@

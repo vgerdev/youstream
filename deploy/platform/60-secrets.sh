@@ -3,7 +3,8 @@
 # Generated values are never printed. The database secret comes from 50-database.sh.
 #   youstream-jwt            JWT_SECRET (session signing key)
 #   youstream-entra          ENTRA_CLIENT_SECRET (prompted: the production client secret from Entra ID)
-#   youstream-ldap           LDAP_BIND_PASSWORD (YouStream's read-only bind), LDAP_ADMIN_PASSWORD (slapd rootdn)
+#   youstream-ldap           LDAP_BIND_PASSWORD (YouStream's read-only service account; OpenLDAP itself is
+#                            administered through its local socket, without a password)
 #   youstream-sftp-hostkey   host_key (EC P-256, the same on every cluster so clients never see a key change)
 #   ghcr-pull                image pull secret, only with GHCR_PULL_SECRET=true
 . "$(dirname "$0")/lib.sh"
@@ -31,16 +32,13 @@ if wanted youstream-entra; then
     if [ -n "$entra" ]; then
         apply_env_secret youstream-entra <<<"ENTRA_CLIENT_SECRET=$entra"
     else
-        echo "skipped youstream-entra: Microsoft sign-in stays off until it exists"
+        echo "skipped youstream-entra: deploy with entra.enabled=false until it exists"
     fi
     unset entra
 fi
 
 if wanted youstream-ldap; then
-    apply_env_secret youstream-ldap <<ENV
-LDAP_BIND_PASSWORD=$(random_secret)
-LDAP_ADMIN_PASSWORD=$(random_secret)
-ENV
+    apply_env_secret youstream-ldap <<<"LDAP_BIND_PASSWORD=$(random_secret)"
 fi
 
 if wanted youstream-sftp-hostkey; then

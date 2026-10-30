@@ -1,0 +1,42 @@
+# OpenLDAP for YouStream. The first start creates the tree under baseDn (ou=people, ou=groups, the service account
+# and groups youstream-users / youstream-admins); users are managed with deploy/openldap/ldap-user.sh.
+
+image:
+  repository: ghcr.io/vgerdev/youstream-openldap
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+baseDn: dc=youstream,dc=example,dc=com
+# the service account's password (LDAP_BIND_PASSWORD), shared with YouStream
+bindPasswordSecret:
+  name: youstream-ldap
+  key: LDAP_BIND_PASSWORD
+
+persistence:
+  # ReadWriteOnce block storage; empty = the cluster's default storage class
+  storageClass: ""
+  size: 1Gi
+
+backup:
+  # nightly slapcat of config and data to a ReadWriteMany claim (YouStream's media volume), kept for 14 days
+  enabled: true
+  existingClaim: youstream-media
+  path: backups/openldap
+  keepDays: 14
+
+# pods that may connect (namespace of the release)
+allowedClients:
+  - app.kubernetes.io/name: youstream
+    app.kubernetes.io/component: web
+  - app.kubernetes.io/name: youstream
+    app.kubernetes.io/component: sftp
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+nodeSelector: {}
+tolerations: []

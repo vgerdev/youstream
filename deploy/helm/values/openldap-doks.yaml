@@ -1,0 +1,9 @@
+# openldap release on the DigitalOcean cluster (production). image.tag comes from the deploy workflow.
+baseDn: dc=youstream,dc=paulsdavenport3,dc=com
+
+persistence:
+  storageClass: do-block-storage
+  size: 1Gi
+
+backup:
+  existingClaim: youstream-media

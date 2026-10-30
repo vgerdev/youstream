@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "youstream.fullname" . }}
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+# YouStream never calls the Kubernetes API
+automountServiceAccountToken: false
+{{- if gt (int .Values.web.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "youstream.fullname" . }}-web
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.web.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "youstream.selectorLabels" (dict "root" . "role" "web") | nindent 6 }}
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+# web: only the gateway's Envoy proxies reach port 8080
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "youstream.fullname" . }}-web
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "youstream.selectorLabels" (dict "root" . "role" "web") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.gatewayNamespace }}
+      ports:
+        - port: 8080
+---
+# sftp: port 2222 from anywhere (the load balancer keeps client addresses); the health port stays closed
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "youstream.fullname" . }}-sftp
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "youstream.selectorLabels" (dict "root" . "role" "sftp") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 2222
+---
+# transcode, maintenance, migrate: nothing connects to them
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "youstream.fullname" . }}-no-ingress
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/instance
+        operator: In
+        values: [{{ .Release.Name | quote }}]
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [transcode, maintenance, migrate]
+  policyTypes: [Ingress]
+{{- end }}

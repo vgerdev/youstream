@@ -1,0 +1,82 @@
+# slapd configuration (cn=config), loaded once with slapadd. Placeholders: @BASE_DN@, @DATA_DIR@, @UID@, @GID@.
+# The database's rootDN is the local-socket identity of the container user, so administration needs no password:
+#   ldapmodify -Y EXTERNAL -H ldapi://%2Ftmp%2Fldapi   (inside the container, as UID @UID@)
+
+dn: cn=config
+objectClass: olcGlobal
+cn: config
+olcArgsFile: /tmp/slapd.args
+olcPidFile: /tmp/slapd.pid
+olcLogLevel: stats
+olcDisallows: bind_anon
+
+dn: cn=module{0},cn=config
+objectClass: olcModuleList
+cn: module{0}
+olcModulePath: /usr/lib/ldap
+olcModuleLoad: back_mdb
+olcModuleLoad: memberof
+olcModuleLoad: refint
+olcModuleLoad: ppolicy
+
+dn: cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: schema
+
+include: file:///etc/ldap/schema/core.ldif
+include: file:///etc/ldap/schema/cosine.ldif
+include: file:///etc/ldap/schema/inetorgperson.ldif
+
+dn: olcDatabase={-1}frontend,cn=config
+objectClass: olcDatabaseConfig
+objectClass: olcFrontendConfig
+olcDatabase: {-1}frontend
+olcPasswordHash: {SSHA}
+
+dn: olcDatabase={0}config,cn=config
+objectClass: olcDatabaseConfig
+olcDatabase: {0}config
+olcAccess: {0}to * by dn.exact=gidNumber=@GID@+uidNumber=@UID@,cn=peercred,cn=external,cn=auth manage by * none
+
+dn: olcDatabase={1}mdb,cn=config
+objectClass: olcDatabaseConfig
+objectClass: olcMdbConfig
+olcDatabase: {1}mdb
+olcSuffix: @BASE_DN@
+olcRootDN: gidNumber=@GID@+uidNumber=@UID@,cn=peercred,cn=external,cn=auth
+olcDbDirectory: @DATA_DIR@
+olcDbMaxSize: 1073741824
+olcDbIndex: objectClass eq
+olcDbIndex: uid eq
+olcDbIndex: mail eq
+olcDbIndex: entryUUID eq
+olcDbIndex: member eq
+olcDbIndex: memberOf eq
+# passwords: users may change their own; binds may check them; nobody reads them
+olcAccess: {0}to attrs=userPassword by self =xw by anonymous auth by * none
+# YouStream's service account reads the tree (user search, memberOf); users read their own entry
+olcAccess: {1}to * by dn.exact="cn=youstream,ou=system,@BASE_DN@" read by self read by * none
+
+# memberOf on users, kept in step with groupOfNames members (YouStream checks ldap.requiredGroup/adminGroup with it)
+dn: olcOverlay={0}memberof,olcDatabase={1}mdb,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcMemberOf
+olcOverlay: {0}memberof
+olcMemberOfRefInt: TRUE
+olcMemberOfGroupOC: groupOfNames
+olcMemberOfMemberAD: member
+olcMemberOfMemberOfAD: memberOf
+
+dn: olcOverlay={1}refint,olcDatabase={1}mdb,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcRefintConfig
+olcOverlay: {1}refint
+olcRefintAttribute: memberOf member
+
+# password rules (cn=default,ou=policies) and hashing of clear-text passwords written by ldap-user.sh
+dn: olcOverlay={2}ppolicy,olcDatabase={1}mdb,cn=config
+objectClass: olcOverlayConfig
+objectClass: olcPPolicyConfig
+olcOverlay: {2}ppolicy
+olcPPolicyDefault: cn=default,ou=policies,@BASE_DN@
+olcPPolicyHashCleartext: TRUE

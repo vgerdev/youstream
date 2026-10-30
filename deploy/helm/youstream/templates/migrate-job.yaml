@@ -1,0 +1,61 @@
+# Flyway migrations before every install and upgrade: a failed migration stops the release before any pod changes.
+# A hook runs before the chart's other resources exist, so it uses only the platform's Secrets and the default
+# ServiceAccount (without its token), not the chart's ConfigMap or volume.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "youstream.fullname" . }}-migrate
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "youstream.selectorLabels" (dict "root" . "role" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "youstream.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: JAVA_OPTS
+              value: {{ .Values.migrate.javaOpts | quote }}
+            - name: DB_POOL_SIZE
+              value: {{ .Values.migrate.dbPoolSize | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.database }}
+          resources:
+            {{- toYaml .Values.migrate.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: db-ca
+              mountPath: /etc/youstream/db-ca
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: db-ca
+          secret:
+            secretName: {{ .Values.secrets.databaseCa }}
+            defaultMode: 0440

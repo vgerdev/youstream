@@ -1,0 +1,26 @@
+# youstream release on the DigitalOcean cluster (production). image.tag, entra.tenantId and entra.clientId come
+# from the deploy workflow (--set), so nothing tenant-specific is committed.
+publicUrl: https://youstream.paulsdavenport3.com
+
+gateway:
+  hostname: youstream.paulsdavenport3.com
+
+ldap:
+  enabled: true
+  url: ldap://openldap:389
+  baseDn: dc=youstream,dc=paulsdavenport3,dc=com
+  bindDn: cn=youstream,ou=system,dc=youstream,dc=paulsdavenport3,dc=com
+  requiredGroup: cn=youstream-users,ou=groups,dc=youstream,dc=paulsdavenport3,dc=com
+  adminGroup: cn=youstream-admins,ou=groups,dc=youstream,dc=paulsdavenport3,dc=com
+
+entra:
+  enabled: true
+
+sftp:
+  publicHost: sftp.youstream.paulsdavenport3.com
+  publicPort: 22
+  # DigitalOcean network load balancer (DOKS default): keeps client IPs, no PROXY protocol
+  proxyProtocol: false
+  service:
+    annotations:
+      service.beta.kubernetes.io/do-loadbalancer-name: youstream-sftp

@@ -1,0 +1,119 @@
+{{- /* One Deployment per role. Every role answers /api/health on 8080 (readiness checks the database too). */ -}}
+{{- $roles := list "web" "transcode" -}}
+{{- if .Values.sftp.enabled }}{{ $roles = append $roles "sftp" }}{{ end -}}
+{{- range $role := $roles }}
+{{- $cfg := index $.Values $role }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "youstream.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "youstream.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+spec:
+  replicas: {{ $cfg.replicas }}
+  revisionHistoryLimit: 5
+  {{- if eq $role "web" }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  {{- else }}
+  # sftp: one server per host key; transcode: the media node has room for one pod only
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "youstream.selectorLabels" (dict "root" $ "role" $role) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "youstream.selectorLabels" (dict "root" $ "role" $role) | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "youstream.fullname" $ }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- if eq $role "transcode" }}
+      terminationGracePeriodSeconds: {{ $cfg.terminationGracePeriodSeconds }}
+      {{- end }}
+      {{- with $cfg.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $cfg.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if eq $role "web" }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "youstream.selectorLabels" (dict "root" $ "role" $role) | nindent 20 }}
+      {{- end }}
+      containers:
+        - name: youstream
+          image: {{ include "youstream.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: ["serve"]
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          env:
+            {{- include "youstream.env" (dict "root" $ "cfg" $cfg "roles" $role) | nindent 12 }}
+            {{- if eq $role "web" }}
+            - name: TRUSTED_PROXY_HOPS
+              value: {{ $cfg.trustedProxyHops | quote }}
+            {{- end }}
+            {{- if eq $role "transcode" }}
+            - name: MEDIA_PRESET
+              value: {{ $cfg.preset | quote }}
+            {{- end }}
+          envFrom:
+            {{- include "youstream.envFrom" $ | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+            {{- if eq $role "sftp" }}
+            - name: sftp
+              containerPort: 2222
+            {{- end }}
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # TCP only: a database outage must not restart every pod
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            {{- toYaml $cfg.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "youstream.volumeMounts" (dict "root" $ "media" true) | nindent 12 }}
+      volumes:
+        {{- include "youstream.volumes" (dict "root" $ "media" true) | nindent 8 }}
+{{- end }}

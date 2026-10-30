@@ -1,0 +1,11 @@
+YouStream {{ .Values.image.tag }} is deployed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+  Web:   {{ .Values.publicUrl }}
+{{- if .Values.sftp.enabled }}
+  SFTP:  sftp <user>@{{ .Values.sftp.publicHost }}
+         DNS: point {{ .Values.sftp.publicHost }} at the address of service {{ include "youstream.fullname" . }}-sftp:
+         kubectl -n {{ .Release.Namespace }} get svc {{ include "youstream.fullname" . }}-sftp
+{{- end }}
+
+Status:  kubectl -n {{ .Release.Namespace }} get pods,httproute,pvc
+Logs:    kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "youstream.fullname" . }}-web

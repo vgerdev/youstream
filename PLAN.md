@@ -356,7 +356,7 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
 | **7. Hardening & packaging** ✅ | Rate limits, quotas, security headers, error pages, cleanup jobs (expired upload sessions, orphaned files), `installDist` distribution, optional Dockerfile, README with run instructions | Fresh clone → configure `local.conf` → `./gradlew :youstream-server:run` works |
 | **8. Cluster-ready server** ✅ | Process roles (`web`, `sftp`, `transcode`) per pod; `migrate` and `maintenance` one-shot commands; proxy-aware client IPs (HTTP `X-Forwarded-For`, SFTP PROXY protocol); login throttle shared through PostgreSQL; SFTP host key loaded from a mounted secret; container JVM flags. See §16 | All tests pass; three local processes with different roles share one `data/` folder and the upload → transcode → watch flow works across them |
 | **9. Cluster platform** 🛠 scripts written, not yet run | Media node pool, Gateway API + Envoy Gateway, cert-manager + Let's Encrypt, in-cluster NFS (RWX storage class), production database and role, Entra redirect URI, DNS. Scripted in `deploy/platform/` | `https://youstream.paulsdavenport3.com` answers with a valid certificate (from a placeholder backend); an RWX test PVC mounts on two nodes |
-| **10. Helm charts** | `deploy/helm/youstream` (web, sftp, transcode, migrate hook, maintenance CronJob, Gateway route, RWX PVC, network policies) and `deploy/helm/openldap` (Debian `slapd` image). Values per cluster: `values-doks.yaml`, `values-eks.yaml` | `helm install` from a laptop brings the site up; LDAP + Microsoft sign-in, browser upload, SFTP upload and playback work in production |
+| **10. Helm charts** 🛠 written, not yet deployed | `deploy/helm/youstream` (web, sftp, transcode, migrate hook, maintenance CronJob, Gateway route, RWX PVC, network policies) and `deploy/helm/openldap` (Debian `slapd` image). Values per cluster in `deploy/helm/values/` | `helm install` from a laptop brings the site up; LDAP + Microsoft sign-in, browser upload, SFTP upload and playback work in production |
 | **11. CI/CD & go-live** | GitHub Actions: build + all tests (Postgres service container, FFmpeg), images to GHCR, `helm upgrade --atomic` to a `production` environment; smoke test; backups; runbook | A push to `master` deploys itself; rollback with `helm rollback` is documented and tried once |
 
 ## 14. Assumptions to confirm
@@ -390,6 +390,20 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
   - Secrets are created from temp files, never from command-line arguments. The `doadmin` password lives only in a temporary Secret.
   - The SFTP host key comes from `ssh-keygen` (PEM, EC P-256). `youstream hostkey` reports the same fingerprint for it.
   - Checked locally against stub `kubectl`/`helm`/`doctl`: every script runs to the end, and all rendered manifests parse.
+- **Phase 10** wrote `deploy/helm/youstream`, `deploy/helm/openldap`, `deploy/helm/values/` and `deploy/openldap/` (image, LDIF, `ldap-user.sh`). Decisions made while writing them:
+  - **Configuration:** environment variables, with Secrets coming in through `envFrom`. The ConfigMap `local.conf` carries only `extraConfig`. `MEDIA_PRESET` is a new override.
+  - **Probes:** readiness uses `/api/health`, which checks the database. Liveness and startup use plain TCP, so a database outage doesn't restart every pod.
+  - **Rollouts:** `transcode` and `sftp` use Recreate. A rolling update would need a second 3-CPU transcode pod on the single media node, and SFTP has one host key.
+  - **Transcode memory:** the JVM gets 15 % of the transcode pod's memory, because the limit also covers FFmpeg.
+  - **Database connections:** at most 20 at once across all pods (web 5 each, sftp 3, transcode 3, maintenance 2, migrate 2).
+  - **Migrations:** the `migrate` hook uses only the platform's Secrets and the default ServiceAccount, because the chart's own resources don't exist yet at pre-install.
+  - **Timeouts:** HTTPRoute `timeouts.request` (60 s, uploads 300 s) replaces the planned `BackendTrafficPolicy`.
+  - **OpenLDAP administration:** the directory's rootDN is the container user's local-socket identity (`peercred`), so there is no admin password and `LDAP_ADMIN_PASSWORD` was dropped from `60-secrets.sh`. `ldap-user.sh` works through `kubectl exec` and sends passwords base64-encoded on stdin, which slapd's ppolicy hashes.
+  - **Group checks:** the memberof and refint overlays supply `memberOf`, which YouStream reads for `requiredGroup` and `adminGroup`.
+  - **Service account password:** set from the Secret by `slapmodify` on every start, so rotating the Secret only needs a pod restart.
+  - **Backups:** a sidecar runs `slapcat` daily to `backups/openldap` on the media volume and keeps 14 days.
+  - **Checks:** `helm lint` passes for both charts. The rendered DOKS and EKS output and the Phase 9 platform manifests (44 resources) pass `kubeconform -strict` against Kubernetes 1.34 and the Gateway API, Envoy Gateway and cert-manager CRD schemas.
+  - **Not yet run:** the OpenLDAP image. There is no Docker on the development machine, so Phase 11's CI builds it and runs a smoke test.
 - **Transcode recovery in Kubernetes**: a restarted container keeps its pod name, so its jobs are requeued at start; a job of a deleted pod is requeued by the stale check after `media.staleJobAfter` (6 h).
 - **Deferred** (not built): thumbnail sprite + WebVTT scrub previews (needs custom player controls), parallel chunk uploads (needs out-of-order chunk tracking), profile pictures and channel banners, notifications, moderation beyond admins deleting content.
 
@@ -459,14 +473,14 @@ Target: `https://youstream.paulsdavenport3.com`, deployed with Helm to the exist
 ### Phase 10: Helm charts
 
 - **`deploy/helm/youstream`**:
-  - Templates: Deployments `web`, `sftp`, `transcode`; CronJob `maintenance`; Job `migrate` (a hook); ConfigMap; PVC; Services; `HTTPRoute`; `BackendTrafficPolicy`; NetworkPolicies; ServiceAccount (`automountServiceAccountToken: false`); PDB.
+  - Templates: Deployments `web`, `sftp`, `transcode`; CronJob `maintenance`; Job `migrate` (a hook); ConfigMap; PVC; Services; `HTTPRoute` (with request timeouts); NetworkPolicies; ServiceAccount (`automountServiceAccountToken: false`); PDB.
   - Timeouts: the upload route `/api/uploads/*` gets a 5-minute request timeout, because Envoy's default of 15 s is too short for 16 MB chunks on slow links.
   - SFTP: `Service` of type `LoadBalancer` maps port 22 to 2222. Its annotations come from values: on DOKS a network load balancer with `externalTrafficPolicy: Local`; on EKS an NLB with PROXY protocol and `SFTP_PROXY_PROTOCOL=true`, and the result is `sftp alice@sftp.youstream.paulsdavenport3.com`.
   - Values: `image.repository/tag`, per-role `replicas`/`resources`/`nodeSelector`/`tolerations`, `persistence.storageClass/size`, `publicUrl`, `sftp.publicHost`, `ldap.*`, `entra.*` (non-secret parts), `existingSecret` names, `gateway.parentRef`.
 - **`deploy/helm/openldap`**:
   - Image: `deploy/openldap/Dockerfile` builds from `debian:trixie-slim` + `slapd` (Debian security updates, no third-party image). Bitnami's OpenLDAP image moved to a paid/legacy catalog in 2025, and `osixia/openldap` is unmaintained.
   - Bootstrap LDIF: `ou=people`, `ou=groups`, groups `youstream-users`/`youstream-admins`, read-only service account for YouStream; `ppolicy` overlay for password rules.
-  - Users are managed with `deploy/openldap/ldap-user.sh add|passwd|disable` (runs `ldapmodify` through `kubectl exec`).
+  - Users are managed with `deploy/openldap/ldap-user.sh add|passwd|disable|enable|admin|unadmin|delete|list` (runs `ldapmodify` through `kubectl exec`).
   - Nightly `slapcat` backup to the media volume.
   - Production sign-in: Microsoft for tenant members; OpenLDAP for everyone else. LDAP users can use SFTP passwords; Microsoft users use SSH keys.
 
@@ -477,8 +491,9 @@ Target: `https://youstream.paulsdavenport3.com`, deployed with Helm to the exist
   - Temurin 25, Node 22 and `apt install ffmpeg`.
   - A `postgres:16` service container supplies `db.testSchema` through a CI-only conf, so every test runs (none skipped).
   - Runs `./gradlew build`.
+  - Builds both images. Starts the OpenLDAP image and checks it: the first start creates the tree, the service account binds, a user added through the local socket gets `memberOf`, and the server's LDAP sign-in works against it.
 - **`.github/workflows/deploy.yml`** (push to `master`, after CI):
-  - Build images with Buildx and push `ghcr.io/vgerdev/youstream:<sha>` (plus `:latest`), and `youstream-openldap` when `deploy/openldap/` changed.
+  - Build images with Buildx and push `ghcr.io/vgerdev/youstream:<sha>` (plus `:latest`), and `youstream-openldap`, tagged with the hash of `deploy/openldap/` so it only changes when that folder does.
   - Run `helm upgrade --install --atomic --wait --timeout 15m --set image.tag=<sha>` in the GitHub environment `production`, using a kubeconfig secret for a namespace-scoped ServiceAccount, which works the same on DOKS and EKS. Required reviewers on the environment are optional.
   - Smoke test: `curl -f https://youstream.paulsdavenport3.com/api/health`.
 - **Backups:**

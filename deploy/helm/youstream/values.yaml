@@ -1,0 +1,168 @@
+# YouStream chart defaults. Cluster-specific settings go in a values file per cluster (deploy/helm/values/).
+# Secrets are not values: the chart reads the Kubernetes Secrets that deploy/platform/ creates (names below).
+
+image:
+  repository: ghcr.io/vgerdev/youstream
+  # set by the deploy workflow to the commit SHA
+  tag: ""
+  pullPolicy: IfNotPresent
+# e.g. [{name: ghcr-pull}] while the image is private
+imagePullSecrets: []
+
+# public address of the web UI (links, Microsoft redirect URI)
+publicUrl: https://youstream.example.com
+
+gateway:
+  # the shared Gateway listener from deploy/platform (20-gateway.sh)
+  parentRef:
+    name: public
+    namespace: gateway
+    sectionName: https-youstream
+  hostname: youstream.example.com
+  # whole-request limit for normal requests; uploads of 16 MB chunks on slow links get longer
+  requestTimeout: 60s
+  uploadTimeout: 300s
+
+persistence:
+  # ReadWriteMany: web, sftp, transcode and maintenance share the media files
+  storageClass: youstream-rwx
+  size: 90Gi
+  # use an existing claim instead of creating youstream-media
+  existingClaim: ""
+
+# Kubernetes Secrets created by deploy/platform/50-database.sh and 60-secrets.sh
+secrets:
+  database: youstream-db          # DB_URL, DB_USER, DB_PASSWORD
+  databaseCa: youstream-db-ca     # ca.crt, mounted at /etc/youstream/db-ca
+  jwt: youstream-jwt              # JWT_SECRET
+  entra: youstream-entra          # ENTRA_CLIENT_SECRET (optional: Microsoft sign-in needs it)
+  ldap: youstream-ldap            # LDAP_BIND_PASSWORD
+  sftpHostKey: youstream-sftp-hostkey   # host_key
+
+ldap:
+  enabled: true
+  url: ldap://openldap:389
+  baseDn: dc=youstream,dc=example,dc=com
+  bindDn: cn=youstream,ou=system,dc=youstream,dc=example,dc=com
+  requiredGroup: cn=youstream-users,ou=groups,dc=youstream,dc=example,dc=com
+  adminGroup: cn=youstream-admins,ou=groups,dc=youstream,dc=example,dc=com
+
+entra:
+  enabled: false
+  tenantId: ""
+  clientId: ""
+
+upload:
+  # per-user limit on stored originals; 0 = unlimited
+  quotaBytes: 50g
+
+# HOCON appended to conf/local.conf, for settings without a value above (see conf/application.conf)
+extraConfig: ""
+# extra environment variables for every YouStream container, e.g. [{name: LOG_LEVEL, value: DEBUG}]
+extraEnv: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+web:
+  replicas: 2
+  # TRUSTED_PROXY_HOPS: the gateway appends the client address to X-Forwarded-For
+  trustedProxyHops: 1
+  dbPoolSize: 5
+  javaOpts: -XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError
+  resources:
+    requests:
+      cpu: 250m
+      memory: 640Mi
+    limits:
+      memory: 1Gi
+  nodeSelector: {}
+  tolerations: []
+  podDisruptionBudget:
+    minAvailable: 1
+
+sftp:
+  enabled: true
+  replicas: 1
+  # host and port shown to users ("sftp alice@sftp.example.com")
+  publicHost: sftp.youstream.example.com
+  publicPort: 22
+  # PROXY protocol header from the load balancer (EKS NLB); DigitalOcean network load balancers keep client IPs
+  proxyProtocol: false
+  dbPoolSize: 3
+  javaOpts: -XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError
+  service:
+    type: LoadBalancer
+    port: 22
+    # Local keeps the client source IP (no SNAT) where the load balancer preserves it
+    externalTrafficPolicy: Local
+    annotations: {}
+    loadBalancerSourceRanges: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      memory: 768Mi
+  nodeSelector: {}
+  tolerations: []
+
+transcode:
+  replicas: 1
+  # FFmpeg processes per pod; one FFmpeg already uses every core
+  workers: 1
+  preset: veryfast
+  dbPoolSize: 3
+  # the memory limit also covers FFmpeg (a child process), so the JVM gets a small share
+  javaOpts: -XX:MaxRAMPercentage=15 -XX:+ExitOnOutOfMemoryError
+  # running jobs are released back to the queue on shutdown
+  terminationGracePeriodSeconds: 60
+  resources:
+    requests:
+      cpu: "3"
+      memory: 5Gi
+    limits:
+      memory: 6656Mi
+  nodeSelector:
+    workload: media
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: media
+      effect: NoSchedule
+
+maintenance:
+  schedule: "*/15 * * * *"
+  dbPoolSize: 2
+  javaOpts: -XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+migrate:
+  dbPoolSize: 2
+  javaOpts: -XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+networkPolicy:
+  enabled: true
+  # where the Envoy proxies run (Envoy Gateway's namespace)
+  gatewayNamespace: envoy-gateway-system

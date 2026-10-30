@@ -1,0 +1,51 @@
+# One cleanup pass per schedule for the whole cluster (abandoned uploads, temp folders, status files, tokens,
+# login failures), instead of a timer in every pod.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "youstream.fullname" . }}-maintenance
+  labels:
+    {{- include "youstream.labels" . | nindent 4 }}
+    app.kubernetes.io/component: maintenance
+spec:
+  schedule: {{ .Values.maintenance.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            {{- include "youstream.selectorLabels" (dict "root" . "role" "maintenance") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "youstream.fullname" . }}
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: maintenance
+              image: {{ include "youstream.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["maintenance"]
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              env:
+                {{- include "youstream.env" (dict "root" . "cfg" .Values.maintenance "roles" "") | nindent 16 }}
+              envFrom:
+                {{- include "youstream.envFrom" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.maintenance.resources | nindent 16 }}
+              volumeMounts:
+                {{- include "youstream.volumeMounts" (dict "root" . "media" true) | nindent 16 }}
+          volumes:
+            {{- include "youstream.volumes" (dict "root" . "media" true) | nindent 12 }}

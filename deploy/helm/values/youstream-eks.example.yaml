@@ -1,0 +1,27 @@
+# Example: the youstream release on EKS. Differences from DOKS: NLB annotations with PROXY protocol for SFTP, and
+# optionally Amazon EFS for the media volume instead of the in-cluster NFS server.
+publicUrl: https://youstream.example.com
+
+gateway:
+  hostname: youstream.example.com
+
+persistence:
+  # youstream-rwx (NFS server on gp3, deploy/platform/40-storage.sh) or efs-sc (EFS CSI driver)
+  storageClass: youstream-rwx
+
+sftp:
+  publicHost: sftp.youstream.example.com
+  publicPort: 22
+  proxyProtocol: true
+  service:
+    # IP targets with PROXY protocol v2 (AWS Load Balancer Controller)
+    externalTrafficPolicy: Cluster
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: external
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+      service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"
+
+transcode:
+  nodeSelector:
+    workload: media
