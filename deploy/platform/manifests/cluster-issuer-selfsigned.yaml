@@ -1,0 +1,8 @@
+# Self-signed certificates for clusters Let's Encrypt cannot reach (a local k3s in WSL): ACME_ISSUER=selfsigned.
+# Browsers warn once per certificate; production uses the Let's Encrypt issuers.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}

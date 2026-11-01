@@ -5,6 +5,7 @@
 | [`platform/`](platform/README.md) | Cluster preparation: media node pool, Gateway, certificates, RWX storage, database, secrets, deploy account | once per cluster, by hand |
 | [`helm/`](helm/README.md) | Charts `youstream` and `openldap`, values per cluster | every deploy (GitHub Actions) |
 | [`openldap/`](openldap/Dockerfile) | OpenLDAP image and `ldap-user.sh` | image built by GitHub Actions |
+| [`local/`](local/README.md) | The same stack on a single-node k3s in WSL, for testing without DigitalOcean costs | while developing |
 | [`../.github/workflows/`](../.github/workflows) | `ci.yml` (build, tests, OpenLDAP check), `deploy.yml` (images + Helm), `backup.yml` (daily media snapshot) | automatic |
 
 ## First production deploy

@@ -27,6 +27,18 @@ k create namespace gateway --dry-run=client -o yaml | k apply -f - >/dev/null
 render "$MANIFESTS/envoyproxy-$PROVIDER.yaml" | k apply -f -
 render "$MANIFESTS/gateway.yaml" | k apply -f -
 
+if [ "$PROVIDER" = local ]; then
+    selector=gateway.envoyproxy.io/owning-gateway-name=public
+    for _ in $(seq 1 60); do
+        [ -n "$(k -n envoy-gateway-system get deployment -l "$selector" -o name 2>/dev/null)" ] && break
+        sleep 5
+    done
+    k -n envoy-gateway-system wait deployment -l "$selector" --for=condition=Available --timeout=5m
+    echo
+    echo "Local Gateway ready; deploy/local/forward.sh publishes it on https://$DOMAIN (no DNS needed)."
+    exit 0
+fi
+
 step "Waiting for the load balancer address (a few minutes for a new load balancer)"
 address=""
 for _ in $(seq 1 60); do

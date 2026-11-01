@@ -411,6 +411,14 @@ A shutdown hook stops the SSHD server, drains the workers (in-flight jobs go bac
   - **`backup.yml`:** a daily VolumeSnapshot of the NFS server's volume, kept for 7 days.
   - **Deploy account:** `deploy/platform/70-deployer.sh` creates the ServiceAccount, with full rights only in namespace `youstream` (no RBAC rights there) and snapshot rights only in `nfs`. It writes its kubeconfig and checks that the account cannot create ClusterRoleBindings.
   - **Checks:** `actionlint` and `kubeconform` pass, and the script ran against stub `kubectl`. None of the workflows has run on GitHub yet.
+- **Local cluster** (`deploy/local/`): the same platform scripts and charts on a single-node k3s in WSL2, with `PROVIDER=local` and `values/*-local.yaml`.
+  - **Node:** labelled `workload=media` but not tainted.
+  - **Networking:** k3s runs without Traefik and ServiceLB. The Gateway and SFTP Services are ClusterIP, and `forward.sh` publishes them on 127.0.0.1:80/443/2222. WSL's localhost forwarding carries real sockets but not iptables port rules.
+  - **Certificate:** self-signed (`ACME_ISSUER=selfsigned`), for `youstream.localhost`.
+  - **Storage:** NFS on local-path, so the RWX path is the same as production.
+  - **Images:** built with Docker in WSL and imported into containerd (`pullPolicy: Never`).
+  - **Database:** `youstream_local` on the development database server.
+  - **Checks:** `helm lint` and `kubeconform` pass on the local values, and the platform sequence ran end to end against stub tools. It has not run on a real WSL cluster yet.
 - **Transcode recovery in Kubernetes**: a restarted container keeps its pod name, so its jobs are requeued at start; a job of a deleted pod is requeued by the stale check after `media.staleJobAfter` (6 h).
 - **Deferred** (not built): thumbnail sprite + WebVTT scrub previews (needs custom player controls), parallel chunk uploads (needs out-of-order chunk tracking), profile pictures and channel banners, notifications, moderation beyond admins deleting content.
 

@@ -5,5 +5,7 @@ gradlew text eol=lf
 # sourced by bash (deploy/platform), where a CR would end up in every value
 *.env text eol=lf
 *.env.example text eol=lf
+# copied into the OpenLDAP image, also when it is built from a Windows checkout
+*.ldif text eol=lf
 *.bat text eol=crlf
 *.jar binary

@@ -1,0 +1,77 @@
+# youstream on a local k3s cluster in WSL (deploy/local). Images are built locally and imported into k3s, so
+# nothing is pulled; resources fit a WSL VM with 4 CPUs and about 10 GB.
+image:
+  repository: youstream
+  tag: local
+  pullPolicy: Never
+
+publicUrl: https://youstream.localhost
+
+gateway:
+  hostname: youstream.localhost
+
+persistence:
+  size: 20Gi
+
+ldap:
+  enabled: true
+  url: ldap://openldap:389
+  baseDn: dc=youstream,dc=local
+  bindDn: cn=youstream,ou=system,dc=youstream,dc=local
+  requiredGroup: cn=youstream-users,ou=groups,dc=youstream,dc=local
+  adminGroup: cn=youstream-admins,ou=groups,dc=youstream,dc=local
+
+# needs the redirect URI https://youstream.localhost/api/auth/microsoft/callback in the app registration
+entra:
+  enabled: false
+
+web:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+sftp:
+  # sftp -P 2222 alice@localhost, through deploy/local/forward.sh
+  publicHost: localhost
+  publicPort: 2222
+  service:
+    type: ClusterIP
+    port: 2222
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 768Mi
+
+transcode:
+  workers: 1
+  javaOpts: -XX:MaxRAMPercentage=25 -XX:+ExitOnOutOfMemoryError
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1536Mi
+    limits:
+      memory: 3Gi
+  # the single node carries the label (10-node-pool.sh) but no taint
+  tolerations: []
+
+maintenance:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+migrate:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

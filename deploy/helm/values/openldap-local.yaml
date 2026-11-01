@@ -1,0 +1,14 @@
+# openldap on a local k3s cluster in WSL (deploy/local); the image is built locally and imported into k3s.
+image:
+  repository: youstream-openldap
+  tag: local
+  pullPolicy: Never
+
+baseDn: dc=youstream,dc=local
+
+persistence:
+  storageClass: local-path
+  size: 1Gi
+
+backup:
+  existingClaim: youstream-media

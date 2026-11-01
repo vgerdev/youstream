@@ -14,6 +14,11 @@ if [ "$PROVIDER" = doks ]; then
             --name media --size "$MEDIA_NODE_SIZE" --count 1 \
             --label workload=media --taint workload=media:NoSchedule
     fi
+elif [ "$PROVIDER" = local ]; then
+    # one node runs everything: the label steers transcode and NFS as in production, without the taint that
+    # would keep every other pod off the only node
+    step "Labelling the node(s) workload=media (no taint)"
+    k label nodes --all workload=media --overwrite
 else
     cat <<'TXT'
 EKS: create a managed node group yourself (eksctl, Terraform or the console), e.g.

@@ -31,12 +31,18 @@ TXT
         doctl databases firewalls append "$db_id" --rule "k8s:$cluster_id"
     fi
 
+elif [ "$PROVIDER" = local ] && [ -n "$DB_CLUSTER" ]; then
+    # a local cluster on a DigitalOcean database (e.g. the development one): host and CA from doctl; the
+    # database's trusted sources are left alone (a WSL cluster connects from your own address)
+    require doctl
+    db_id=$(doctl databases get "$DB_CLUSTER" --format ID --no-header)
+    [ -n "$DB_HOST" ] || DB_HOST=$(doctl databases connection "$db_id" --format Host --no-header)
+fi
+if [ -n "${db_id:-}" ] && [ -z "$DB_CA_FILE" ]; then
     step "CA certificate"
-    if [ -z "$DB_CA_FILE" ]; then
-        DB_CA_FILE=$(mktemp)
-        ca_download=$DB_CA_FILE
-        doctl databases get-ca "$db_id" --format Certificate --no-header | base64 -d >"$DB_CA_FILE"
-    fi
+    DB_CA_FILE=$(mktemp)
+    ca_download=$DB_CA_FILE
+    doctl databases get-ca "$db_id" --format Certificate --no-header | base64 -d >"$DB_CA_FILE"
 fi
 [ -n "$DB_HOST" ] || die "DB_HOST is empty"
 [ -s "$DB_CA_FILE" ] || die "DB_CA_FILE is empty or missing"

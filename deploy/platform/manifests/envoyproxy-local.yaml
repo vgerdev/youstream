@@ -1,0 +1,23 @@
+# Envoy for the Gateway on a local k3s cluster in WSL. A ClusterIP Service: deploy/local/forward.sh publishes it with
+# kubectl port-forward on 127.0.0.1:80/443, which Windows reaches through WSL's localhost forwarding (published
+# load balancer ports are iptables rules, which that forwarding does not carry).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: public
+  namespace: gateway
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 1
+        container:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+      envoyService:
+        type: ClusterIP

@@ -14,7 +14,7 @@ CLUSTER_ENV="${CLUSTER_ENV:-cluster.env}"
 # shellcheck disable=SC1090
 . "$HERE/$CLUSTER_ENV"
 
-case "$PROVIDER" in doks|eks) ;; *) die "PROVIDER must be doks or eks" ;; esac
+case "$PROVIDER" in doks|eks|local) ;; *) die "PROVIDER must be doks, eks or local" ;; esac
 [ -n "$KUBE_CONTEXT" ] || die "KUBE_CONTEXT is empty in $CLUSTER_ENV"
 
 require() {
