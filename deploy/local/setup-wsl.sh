@@ -71,6 +71,22 @@ if ! command -v doctl >/dev/null && command -v doctl.exe >/dev/null; then
     sudo ln -sf "$(command -v doctl.exe)" /usr/local/bin/doctl
 fi
 
+rule=/etc/sudoers.d/youstream-image-import
+if [ ! -f "$rule" ]; then
+    step "Optional: image import without a password"
+    echo "images.sh loads images into k3s with 'sudo k3s ctr -n k8s.io images import -'. A sudoers rule can allow"
+    echo "exactly that command (nothing else) without a password, so it also works when run by a tool or script."
+    read -r -p "Add $rule? [y/N] " answer
+    if [ "$answer" = y ]; then
+        tmp=$(mktemp)
+        echo "$USER ALL=(root) NOPASSWD: $(command -v k3s) ctr -n k8s.io images import -" >"$tmp"
+        sudo visudo -cf "$tmp" >/dev/null
+        sudo install -m 0440 -o root -g root "$tmp" "$rule"
+        rm -f "$tmp"
+        echo "added: $(sudo cat "$rule")"
+    fi
+fi
+
 step "Cluster"
 kubectl get nodes -o wide
 echo

@@ -10,5 +10,5 @@ echo "==> youstream-openldap:local"
 docker build -t youstream-openldap:local "$ROOT/deploy/openldap"
 
 echo "==> importing into k3s"
+# exactly this command is password-free with the optional sudoers rule from setup-wsl.sh
 docker save youstream:local youstream-openldap:local | sudo k3s ctr -n k8s.io images import -
-sudo k3s ctr -n k8s.io images ls -q | grep -E 'youstream(-openldap)?:local'
