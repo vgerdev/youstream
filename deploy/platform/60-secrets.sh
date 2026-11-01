@@ -27,7 +27,7 @@ if wanted youstream-jwt; then
 fi
 
 if wanted youstream-entra; then
-    read -r -s -p "Entra ID client secret for production (input hidden, empty = skip): " entra
+    read -r -s -p "Entra ID client secret for production (input hidden, empty = skip): " entra || entra=""  # no input at all: skip too
     echo
     if [ -n "$entra" ]; then
         apply_env_secret youstream-entra <<<"ENTRA_CLIENT_SECRET=$entra"

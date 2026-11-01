@@ -5,11 +5,19 @@
 require kubectl
 ensure_namespace
 
+# doctl databases get/connection/get-ca take the cluster's ID; DB_CLUSTER may be its name or its ID
+database_id() {
+    local id
+    id=$(doctl databases list --format ID,Name --no-header | awk -v c="$1" '$1 == c || $2 == c { print $1 }')
+    [ -n "$id" ] || die "no database cluster named $1 (doctl databases list)"
+    echo "$id"
+}
+
 if [ "$PROVIDER" = doks ]; then
     require doctl
     [ -n "$DB_CLUSTER" ] || die "DB_CLUSTER is empty"
     [ -n "$CLUSTER_NAME" ] || die "CLUSTER_NAME is empty"
-    db_id=$(doctl databases get "$DB_CLUSTER" --format ID --no-header)
+    db_id=$(database_id "$DB_CLUSTER")
     cluster_id=$(doctl kubernetes cluster get "$CLUSTER_NAME" --format ID --no-header)
     [ -n "$DB_HOST" ] || DB_HOST=$(doctl databases connection "$db_id" --format Host --no-header)
 
@@ -35,14 +43,21 @@ elif [ "$PROVIDER" = local ] && [ -n "$DB_CLUSTER" ]; then
     # a local cluster on a DigitalOcean database (e.g. the development one): host and CA from doctl; the
     # database's trusted sources are left alone (a WSL cluster connects from your own address)
     require doctl
-    db_id=$(doctl databases get "$DB_CLUSTER" --format ID --no-header)
+    db_id=$(database_id "$DB_CLUSTER")
     [ -n "$DB_HOST" ] || DB_HOST=$(doctl databases connection "$db_id" --format Host --no-header)
 fi
 if [ -n "${db_id:-}" ] && [ -z "$DB_CA_FILE" ]; then
     step "CA certificate"
     DB_CA_FILE=$(mktemp)
     ca_download=$DB_CA_FILE
-    doctl databases get-ca "$db_id" --format Certificate --no-header | base64 -d >"$DB_CA_FILE"
+    # recent doctl prints the PEM itself, older releases its base64
+    ca=$(doctl databases get-ca "$db_id" --format Certificate --no-header | tr -d '\r')
+    if grep -q 'BEGIN CERTIFICATE' <<<"$ca"; then
+        printf '%s\n' "$ca" >"$DB_CA_FILE"
+    else
+        base64 -d <<<"$ca" >"$DB_CA_FILE"
+    fi
+    unset ca
 fi
 [ -n "$DB_HOST" ] || die "DB_HOST is empty"
 [ -s "$DB_CA_FILE" ] || die "DB_CA_FILE is empty or missing"
