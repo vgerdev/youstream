@@ -3,6 +3,8 @@
 # these sockets to Windows, so https://youstream.localhost works in a Windows browser. Runs until Ctrl-C and
 # reconnects when a pod restarts.
 set -euo pipefail
+# k3s's kubectl falls back to /etc/rancher/k3s/k3s.yaml (root only); setup-wsl.sh copies it to ~/.kube/config
+[ -n "${KUBECONFIG:-}" ] || export KUBECONFIG="$HOME/.kube/config"
 
 gateway=$(kubectl -n envoy-gateway-system get svc \
     -l gateway.envoyproxy.io/owning-gateway-name=public,gateway.envoyproxy.io/owning-gateway-namespace=gateway \

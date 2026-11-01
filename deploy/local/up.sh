@@ -2,6 +2,8 @@
 # Installs or upgrades both releases on the local cluster with the local values and the locally built images.
 # The image tag is always "local", so Helm sees no change after images.sh: pass --restart to roll the pods.
 set -euo pipefail
+# k3s's kubectl falls back to /etc/rancher/k3s/k3s.yaml (root only); setup-wsl.sh copies it to ~/.kube/config
+[ -n "${KUBECONFIG:-}" ] || export KUBECONFIG="$HOME/.kube/config"
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 VALUES="$ROOT/deploy/helm/values"
 

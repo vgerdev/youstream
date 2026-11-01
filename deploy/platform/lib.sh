@@ -16,6 +16,10 @@ CLUSTER_ENV="${CLUSTER_ENV:-cluster.env}"
 
 case "$PROVIDER" in doks|eks|local) ;; *) die "PROVIDER must be doks, eks or local" ;; esac
 [ -n "$KUBE_CONTEXT" ] || die "KUBE_CONTEXT is empty in $CLUSTER_ENV"
+if [ "$PROVIDER" = local ] && [ -z "${KUBECONFIG:-}" ]; then
+    # k3s's kubectl falls back to /etc/rancher/k3s/k3s.yaml (root only); setup-wsl.sh copies it to ~/.kube/config
+    export KUBECONFIG="$HOME/.kube/config"
+fi
 
 require() {
     local tool
