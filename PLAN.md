@@ -540,6 +540,8 @@ Target: `https://youstream.paulsdavenport3.com`, deployed with Helm to the exist
 ### Risks / to verify
 
 - **Capacity of the default pool.** Two web pods, sftp, openldap, Envoy, cert-manager and the NFS server need about 1.2 CPU and 3 GB in requests on 3 × (920m / 1.5 GB) nodes, on top of what already runs there. Moving the default pool to `s-2vcpu-4gb` may be necessary; otherwise sftp, openldap and NFS can tolerate the media taint.
-- NFS ownership and permissions with UID 10001 / `fsGroup`, and atomic renames over NFS. `40-storage.sh` checks both with two pods.
+- NFS ownership and permissions with UID 10001 / `fsGroup`, and atomic renames over NFS. `40-storage.sh` checks both with two pods. First run (local k3s, 2026-11-01):
+  - Renames and cross-pod writes work, and files are owned by UID 10001.
+  - The group shows as `nobody` (4294967294), because NFSv4 maps group IDs by name. This doesn't matter, since every YouStream pod accesses files as UID 10001, so the check no longer requires the group.
 - **Database connections.** Small DO managed PostgreSQL plans allow roughly 20–25 connections. Phase 10 sets `DB_POOL_SIZE` per role (for example web 5, sftp 3, transcode 3, maintenance and migrate 2) instead of the default 10.
 - FFmpeg in the image comes from Ubuntu noble (6.1), not the 9.0.2 used in development. The CI run in Phase 11 covers the media tests against it.

@@ -1,4 +1,4 @@
-# Throwaway check of youstream-rwx with the app's user (UID/GID 10001): two pods, preferably on different nodes,
+# Throwaway check of youstream-rwx with the app's user (UID 10001): two pods, preferably on different nodes,
 # each write a file through a temp-file rename (how the app stores uploads), then wait to see the other's file.
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -64,9 +64,14 @@ spec:
                 sleep 2
               done
               [ -f /data/check/pod-0 ] && [ -f /data/check/pod-1 ] || { echo "FAIL: other pod's file not visible"; exit 1; }
-              owner=$(stat -c %u:%g "/data/check/$me")
-              [ "$owner" = 10001:10001 ] || { echo "FAIL: owner $owner"; exit 1; }
-              echo "OK $me on $NODE: pod-0 wrote on $(cat /data/check/pod-0), pod-1 on $(cat /data/check/pod-1), owner $owner"
+              # every YouStream pod runs as UID 10001, so access goes through the owner; NFSv4 may show the group
+              # as nobody (4294967294) because group IDs are mapped by name, which does not affect the app
+              owner=$(stat -c %u "/data/check/$me")
+              group=$(stat -c %g "/data/check/$me")
+              [ "$owner" = 10001 ] || { echo "FAIL: owner UID $owner"; exit 1; }
+              other="/data/check/pod-$((1 - JOB_COMPLETION_INDEX))"
+              echo "$me" >> "$other" || { echo "FAIL: cannot write the other pod's file"; exit 1; }
+              echo "OK $me on $NODE: pod-0 wrote on $(head -1 /data/check/pod-0), pod-1 on $(head -1 /data/check/pod-1), owner UID $owner (group shown as $group), other pod's file writable"
           volumeMounts:
             - name: data
               mountPath: /data
