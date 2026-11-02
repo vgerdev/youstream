@@ -14,7 +14,9 @@ RUN groupadd --system --gid 10002 openldap \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends slapd ldap-utils \
     && rm -rf /var/lib/apt/lists/* /etc/ldap/slapd.d /var/lib/ldap/* \
-    && mkdir -p /var/lib/openldap && chown openldap:openldap /var/lib/openldap
+    && mkdir -p /var/lib/openldap && chown openldap:openldap /var/lib/openldap \
+    && install -d -m 0755 /opt/openldap
+# the directory exists first: COPY --chmod would otherwise give the directory it creates the file mode (0644)
 COPY --chmod=0644 config.ldif bootstrap.ldif /opt/openldap/
 COPY --chmod=0755 entrypoint.sh /opt/openldap/
 ENV LDAPI_URL=ldapi://%2Ftmp%2Fldapi

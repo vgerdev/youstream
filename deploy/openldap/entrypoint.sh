@@ -38,4 +38,7 @@ slapmodify -n 1 -F "$CONF" -l "$work/service.ldif" >/dev/null
 rm -rf "$work"
 trap - EXIT
 
+# slapd sizes its connection tables from the open-files limit; containerd's default (about a million) makes it
+# allocate past the memory limit at once and get OOM-killed
+ulimit -n "${SLAPD_MAX_FILES:-1024}"
 exec slapd -d "${SLAPD_DEBUG_LEVEL:-256}" -F "$CONF" -h "ldap://:1389/ $LDAPI_URL"
