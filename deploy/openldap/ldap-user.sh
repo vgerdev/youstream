@@ -11,6 +11,8 @@
 # Environment: KUBE_CONTEXT (default: current context), NAMESPACE (default youstream), POD (default openldap-0).
 # Passwords are read without echo and passed on stdin, never on a command line.
 set -euo pipefail
+# k3s's kubectl falls back to /etc/rancher/k3s/k3s.yaml (root only); ~/.kube/config is every other kubectl's default
+[ -n "${KUBECONFIG:-}" ] || export KUBECONFIG="$HOME/.kube/config"
 
 NAMESPACE="${NAMESPACE:-youstream}"
 POD="${POD:-openldap-0}"
