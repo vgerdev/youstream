@@ -30,6 +30,7 @@ import io.jooby.EnvironmentOptions;
 import io.jooby.ExecutionMode;
 import io.jooby.Jooby;
 import io.jooby.undertow.UndertowServer;
+import io.undertow.UndertowOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -178,8 +179,19 @@ public final class YouStreamServer {
             .publicUrl(conf.getString("app.publicUrl").replaceAll("/+$", ""))
             .trustedProxyHops(conf.getInt("server.trustedProxyHops"))
             .maxUploadBytes(conf.getBytes("upload.maxBytes"))
-            .uploadChunkBytes(conf.getBytes("upload.chunkBytes"))
+            .uploadChunkBytes(uploadChunkBytes(conf))
             .build();
+    }
+
+    static long uploadChunkBytes(Config conf) {
+        long chunkBytes = conf.getBytes("upload.chunkBytes");
+        // Undertow closes the connection with a bare 500 on any request body over its MAX_ENTITY_SIZE, which Jooby
+        // leaves at Undertow's default (2 MiB) whatever server.maxRequestSize says
+        if (chunkBytes > UndertowOptions.DEFAULT_MAX_ENTITY_SIZE) {
+            throw new IllegalStateException("upload.chunkBytes must be at most "
+                + UndertowOptions.DEFAULT_MAX_ENTITY_SIZE + " bytes (Undertow's request size limit): " + chunkBytes);
+        }
+        return chunkBytes;
     }
 
     /**
