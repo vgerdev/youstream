@@ -42,6 +42,9 @@ secrets:
 ldap:
   enabled: true
   url: ldap://openldap:389
+  # plain LDAP is only accepted for localhost unless this is set: the openldap release is in the same namespace
+  # and its NetworkPolicy admits only the web and sftp pods. Set false for a directory reached over ldaps://.
+  allowInsecure: true
   baseDn: dc=youstream,dc=example,dc=com
   bindDn: cn=youstream,ou=system,dc=youstream,dc=example,dc=com
   requiredGroup: cn=youstream-users,ou=groups,dc=youstream,dc=example,dc=com

@@ -58,6 +58,8 @@ Settings come from values; secrets from the platform's Secrets via envFrom (see 
 {{- if $v.ldap.enabled }}
 - name: LDAP_URL
   value: {{ $v.ldap.url | quote }}
+- name: LDAP_ALLOW_INSECURE
+  value: {{ $v.ldap.allowInsecure | default false | quote }}
 - name: LDAP_BASE_DN
   value: {{ $v.ldap.baseDn | quote }}
 - name: LDAP_BIND_DN

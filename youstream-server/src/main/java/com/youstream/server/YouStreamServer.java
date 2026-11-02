@@ -246,6 +246,7 @@ public final class YouStreamServer {
         Config c = conf.getConfig("ldap");
         LdapConfig config = LdapConfig.builder()
             .url(c.getString("url"))
+            .allowInsecure(c.getBoolean("allowInsecure"))
             .mode(LdapConfig.Mode.valueOf(c.getString("mode").toUpperCase(Locale.ROOT)))
             .baseDn(c.getString("baseDn"))
             .bindDn(c.getString("bindDn"))
