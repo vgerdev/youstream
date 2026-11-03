@@ -26,9 +26,11 @@ RUN apt-get update \
 COPY --from=build /src/youstream-server/build/install/youstream /opt/youstream
 WORKDIR /opt/youstream
 # heap sized from the container memory limit, leaving room for metaspace, threads and buffers;
-# exit on OOM so the orchestrator restarts a clean process
+# exit on OOM so the orchestrator restarts a clean process.
+# YOUSTREAM_OPTS names Jooby's environment (otherwise "dev"); separate from JAVA_OPTS, which the Helm chart replaces
 ENV STORAGE_ROOT=/data \
-    JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError"
+    JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError" \
+    YOUSTREAM_OPTS="-Dapplication.env=prod"
 VOLUME /data
 EXPOSE 8080 2222
 USER youstream
