@@ -47,7 +47,7 @@ export default function SaveToPlaylist(props: { videoId: string; open: boolean; 
   };
 
   return (
-    <Modal open={props.open} title="Save to playlist" onClose={props.onClose}>
+    <Modal open={props.open} title="Add to Playlist" onClose={props.onClose}>
       <Show when={playlists.data} fallback={<p class="text-sm text-neutral-500">Loading…</p>}>
         {(lists) => (
           <Show when={lists().length > 0} fallback={<p class="text-sm text-neutral-500">You have no playlists yet.</p>}>
@@ -89,6 +89,15 @@ export default function SaveToPlaylist(props: { videoId: string; open: boolean; 
           {error()}
         </p>
       </Show>
+      <div class="flex justify-end">
+        <button
+          type="button"
+          class="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          onClick={props.onClose}
+        >
+          Cancel
+        </button>
+      </div>
     </Modal>
   );
 }

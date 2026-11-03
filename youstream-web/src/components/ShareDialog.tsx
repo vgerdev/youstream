@@ -48,6 +48,15 @@ export default function ShareDialog(props: { video: Video; currentTime: () => nu
       >
         <CopyField label="Embed" value={embed()} multiline />
       </Show>
+      <div class="flex justify-end">
+        <button
+          type="button"
+          class="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+          onClick={props.onClose}
+        >
+          Cancel
+        </button>
+      </div>
     </Modal>
   );
 }

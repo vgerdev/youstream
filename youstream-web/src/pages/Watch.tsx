@@ -172,7 +172,7 @@ function WatchVideo(props: { id: string }) {
                   </button>
                   <Show when={auth.user() && v().status === 'READY'}>
                     <button class={pill} onClick={() => setSaving(true)}>
-                      Save
+                      Add to Playlist
                     </button>
                   </Show>
                   <Show when={v().canEdit}>
